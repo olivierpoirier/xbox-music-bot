@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import play from "play-dl";
+import { resolveSpotifyUrl, SpotifyResolverError } from "./spotify";
 
 import { YTDLP_CONFIG } from "./config";
 import { ProbeResult, ResolvedItem } from "./types";
@@ -235,39 +236,16 @@ async function runYtDlp(
 
 export async function resolveSpotify(url: string): Promise<ResolvedItem[]> {
   try {
-    if (play.is_expired()) {
-      await play.refreshToken();
-    }
-
-    const data = await play.spotify(url);
-
-    const convert = (t: any): ResolvedItem => {
-      const artist = t.artists?.[0]?.name || "";
-      const title = t.name;
-      const query = `${artist} - ${title}`;
-
-      return {
-        url: `provider:spotify:${query}`,
-        title,
-        thumb: t.thumbnail?.url || null,
-        durationSec: t.durationInSec || 0,
-      };
-    };
-
-    if (data instanceof play.SpotifyTrack) {
-      return [convert(data)];
-    }
-
-    if (
-      data instanceof play.SpotifyAlbum ||
-      data instanceof play.SpotifyPlaylist
-    ) {
-      const tracks = await data.all_tracks();
-      return tracks.slice(0, 200).map(convert);
-    }
-
-    return [];
+    return await resolveSpotifyUrl(url);
   } catch (err) {
+    if (err instanceof SpotifyResolverError) {
+      console.error("[spotify resolver error]", err.code, err.message);
+
+      if (err.code === "SPOTIFY_PLAYLIST_NOT_ACCESSIBLE") {
+        throw err;
+      }
+    }
+
     console.error("[spotify resolver error]", err);
     return [];
   }

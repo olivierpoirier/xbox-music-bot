@@ -1,189 +1,514 @@
 import { spawn } from "child_process";
 import play from "play-dl";
+
 import { YTDLP_CONFIG } from "./config";
 import { ProbeResult, ResolvedItem } from "./types";
 
-/* ------------------- CACHE ------------------- */
-type CacheVal<T> = { v: T; exp: number };
+/* ------------------------------------------------ */
+/* CACHE                                            */
+/* ------------------------------------------------ */
+
+type CacheVal<T> = {
+  v: T;
+  exp: number;
+};
+
 const PROBE_CACHE = new Map<string, CacheVal<ProbeResult>>();
-const FLAT_CACHE = new Map<string, CacheVal<ResolvedItem[]>>();
 const DIRECT_CACHE = new Map<string, CacheVal<string>>();
+const FLAT_CACHE = new Map<string, CacheVal<ResolvedItem[]>>();
 
-function cacheGet<K, V>(m: Map<K, CacheVal<V>>, k: K): V | undefined {
-  const c = m.get(k);
-  if (!c || c.exp < Date.now()) { m.delete(k); return; }
-  return c.v;
-}
+function cacheGet<K, V>(map: Map<K, CacheVal<V>>, key: K): V | undefined {
+  const val = map.get(key);
+  if (!val) return undefined;
 
-function cacheSet<K, V>(m: Map<K, CacheVal<V>>, k: K, v: V): void {
-  if (m.size >= YTDLP_CONFIG.cacheMax) {
-    const it = m.keys().next();
-    if (!it.done) m.delete(it.value);
+  if (val.exp < Date.now()) {
+    map.delete(key);
+    return undefined;
   }
-  m.set(k, { v, exp: Date.now() + YTDLP_CONFIG.cacheTTL });
+
+  return val.v;
 }
 
-/* ------------------- UTILS ------------------- */
+function cacheSet<K, V>(map: Map<K, CacheVal<V>>, key: K, value: V): void {
+  if (map.size >= YTDLP_CONFIG.cacheMax) {
+    const first = map.keys().next();
+    if (!first.done) map.delete(first.value);
+  }
 
-export function normalizeUrl(u: string): string {
-  if (!u) return "";
+  map.set(key, {
+    v: value,
+    exp: Date.now() + YTDLP_CONFIG.cacheTTL,
+  });
+}
+
+/* ------------------------------------------------ */
+/* URL HELPERS                                      */
+/* ------------------------------------------------ */
+
+export function normalizeUrl(url: string): string {
+  if (!url) return "";
+
   try {
-    const url = new URL(u);
-    const host = url.hostname.toLowerCase();
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+
     if (host.includes("youtu.be")) {
-      const id = url.pathname.replace(/^\/+/, "");
-      return id ? `https://www.youtube.com/watch?v=${id}` : u;
-    }
-    if (host.includes("youtube.com")) {
-      const id = url.searchParams.get("v");
+      const id = u.pathname.replace(/^\/+/, "");
       if (id) return `https://www.youtube.com/watch?v=${id}`;
     }
-    return u;
-  } catch { return u; }
+
+    if (host.includes("youtube.com")) {
+      if (u.pathname === "/watch") {
+        const id = u.searchParams.get("v");
+        if (id) return `https://www.youtube.com/watch?v=${id}`;
+      }
+
+      if (u.pathname === "/shorts") {
+        const parts = u.pathname.split("/").filter(Boolean);
+        const id = parts[1];
+        if (id) return `https://www.youtube.com/watch?v=${id}`;
+      }
+
+      if (u.pathname.startsWith("/shorts/")) {
+        const id = u.pathname.split("/")[2];
+        if (id) return `https://www.youtube.com/watch?v=${id}`;
+      }
+    }
+
+    return url;
+  } catch {
+    return url;
+  }
 }
 
-/* --------------- YT-DLP SPANNER (Sécurisé) --------------- */
+function isSpotifyUrl(url: string): boolean {
+  return url.includes("spotify.com") || url.includes("open.spotify");
+}
 
-async function runYtDlp(args: string[]): Promise<string> {
+function isYoutubeUrl(url: string): boolean {
+  return url.includes("youtube.com") || url.includes("youtu.be");
+}
+
+function isYoutubeSearchUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (
+      u.hostname.toLowerCase().includes("youtube.com") &&
+      u.pathname === "/results"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isYouTubePlaylistUrl(url: string): boolean {
+  return (
+    url.includes("list=") ||
+    url.includes("/playlist") ||
+    url.includes("music.youtube.com/playlist")
+  );
+}
+
+function isSoundCloudSetUrl(url: string): boolean {
+  return url.includes("soundcloud.com") && url.includes("/sets/");
+}
+
+function isProbablyPlaylistUrl(url: string): boolean {
+  return isYouTubePlaylistUrl(url) || isSoundCloudSetUrl(url);
+}
+
+function buildYtDlpArgs(
+  url: string,
+  extraArgs: string[] = [],
+  opts?: {
+    useCookies?: boolean;
+  }
+): string[] {
+  const args = [...YTDLP_CONFIG.baseArgs];
+
+  const useCookies =
+    Boolean(opts?.useCookies) &&
+    YTDLP_CONFIG.hasCookies &&
+    isYoutubeUrl(url) &&
+    !isYoutubeSearchUrl(url);
+
+  if (useCookies) {
+    args.push("--cookies", YTDLP_CONFIG.cookiesPath.replace(/\\/g, "/"));
+  }
+
+  return [...args, ...extraArgs];
+}
+
+function killProcessTree(proc: ReturnType<typeof spawn>) {
+  try {
+    if (process.platform === "win32" && proc.pid) {
+      spawn("taskkill", ["/pid", String(proc.pid), "/f", "/t"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    } else {
+      proc.kill("SIGKILL");
+    }
+  } catch {}
+}
+
+function pickFirstHttpLine(output: string): string | null {
+  return (
+    output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => /^https?:\/\//i.test(line)) || null
+  );
+}
+
+/* ------------------------------------------------ */
+/* YT-DLP RUNNER                                    */
+/* ------------------------------------------------ */
+
+async function runYtDlp(
+  url: string,
+  extraArgs: string[],
+  opts?: { useCookies?: boolean }
+): Promise<string> {
+  const finalArgs = buildYtDlpArgs(url, extraArgs, opts);
+
   return new Promise((resolve, reject) => {
-    const p = spawn(YTDLP_CONFIG.bin, [...YTDLP_CONFIG.extraArgs, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    console.log(`[yt-dlp] ${YTDLP_CONFIG.bin} ${finalArgs.join(" ")}`);
+
+    const proc = spawn(YTDLP_CONFIG.bin, finalArgs, {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
     let out = "";
     let err = "";
-    p.stdout.on("data", (d) => (out += d.toString()));
-    p.stderr.on("data", (d) => (err += d.toString()));
-    p.on("close", (code) => {
-      if (code === 0) resolve(out.trim());
-      else reject(new Error(err || `Exit code ${code}`));
+    let finished = false;
+
+    const timeout = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+
+      killProcessTree(proc);
+
+      if (err.trim()) {
+        console.error("[yt-dlp timeout stderr]", err);
+      }
+
+      reject(new Error("yt-dlp timeout"));
+    }, YTDLP_CONFIG.processTimeoutMs);
+
+    proc.stdout.on("data", (d) => {
+      out += d.toString();
+    });
+
+    proc.stderr.on("data", (d) => {
+      err += d.toString();
+    });
+
+    proc.on("error", (spawnErr) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      reject(spawnErr);
+    });
+
+    proc.on("close", (code) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+
+      if (code === 0) {
+        resolve(out.trim());
+      } else {
+        if (err.trim()) {
+          console.error("[yt-dlp error]", err);
+        }
+        reject(new Error(err || `Exit code ${code}`));
+      }
     });
   });
 }
 
-/* --------------- SPOTIFY (FAST RESOLVE) --------------- */
+/* ------------------------------------------------ */
+/* SPOTIFY                                          */
+/* ------------------------------------------------ */
 
-/**
- * Optimisation : On ne cherche PAS sur YouTube ici.
- * On crée juste un "placeholder" que player.ts résoudra au dernier moment.
- */
 export async function resolveSpotify(url: string): Promise<ResolvedItem[]> {
   try {
-    if (play.is_expired()) await play.refreshToken();
+    if (play.is_expired()) {
+      await play.refreshToken();
+    }
+
     const data = await play.spotify(url);
 
-    const trackToPlaceholder = (t: any): ResolvedItem => {
+    const convert = (t: any): ResolvedItem => {
       const artist = t.artists?.[0]?.name || "";
       const title = t.name;
       const query = `${artist} - ${title}`;
+
       return {
-        // Préfixe spécial pour que player.ts sache qu'il faut chercher
-        url: `provider:spotify:${query}`, 
-        title: title,
+        url: `provider:spotify:${query}`,
+        title,
         thumb: t.thumbnail?.url || null,
-        durationSec: t.durationInSec || 0
+        durationSec: t.durationInSec || 0,
       };
     };
 
-    if (data instanceof play.SpotifyTrack) return [trackToPlaceholder(data)];
-    if (data instanceof play.SpotifyAlbum || data instanceof play.SpotifyPlaylist) {
-      const tracks = await data.all_tracks();
-      return tracks.slice(0, 200).map(t => trackToPlaceholder(t));
+    if (data instanceof play.SpotifyTrack) {
+      return [convert(data)];
     }
+
+    if (
+      data instanceof play.SpotifyAlbum ||
+      data instanceof play.SpotifyPlaylist
+    ) {
+      const tracks = await data.all_tracks();
+      return tracks.slice(0, 200).map(convert);
+    }
+
     return [];
-  } catch (e) {
-    console.error("[ytdlp] Spotify Error:", e);
+  } catch (err) {
+    console.error("[spotify resolver error]", err);
     return [];
   }
 }
 
-/* --------------- INTERFACE PUBLIQUE --------------- */
+/* ------------------------------------------------ */
+/* PLAYLIST RESOLVE                                 */
+/* ------------------------------------------------ */
 
-export async function resolveUrlToPlayableItems(url: string): Promise<ResolvedItem[]> {
+export async function resolveUrlToPlayableItems(
+  url: string
+): Promise<ResolvedItem[]> {
   const normalized = normalizeUrl(url);
-  
-  // 1. Cache
   const cached = cacheGet(FLAT_CACHE, normalized);
+
   if (cached) return cached;
 
-  // 2. Spotify (Ultra rapide avec les placeholders)
-  if (normalized.includes("spotify.com")) {
+  /* SPOTIFY */
+
+  if (isSpotifyUrl(normalized)) {
     const items = await resolveSpotify(normalized);
     cacheSet(FLAT_CACHE, normalized, items);
     return items;
   }
 
-  // 3. Playlists (YouTube / SoundCloud)
-  if (normalized.includes("list=") || normalized.includes("/playlist") || normalized.includes("/sets/")) {
+  /* SEARCH URL -> refuser comme playlist */
+
+  if (isYoutubeSearchUrl(normalized)) {
+    return [];
+  }
+
+  /* PLAYLISTS */
+
+  if (isProbablyPlaylistUrl(normalized)) {
     try {
-      const json = await runYtDlp(["--flat-playlist", "-J", normalized]);
+      const json = await runYtDlp(
+        normalized,
+        ["--flat-playlist", "-J", normalized],
+        { useCookies: true }
+      );
+
       const data = JSON.parse(json);
-      if (data.entries) {
-        const items = data.entries.map((e: any) => ({
-          url: e.url || (e.id ? `https://www.youtube.com/watch?v=${e.id}` : ""),
-          title: e.title || "Titre inconnu",
-          thumb: e.thumbnail || (e.thumbnails && e.thumbnails.length > 0 ? e.thumbnails[e.thumbnails.length - 1].url : null),
-          durationSec: Number(e.duration) || 0
-        })).filter((i: any) => i.url);
+
+      if (Array.isArray(data.entries)) {
+        const items = data.entries
+          .map((e: any) => {
+            let entryUrl =
+              e.url || (e.id ? `https://www.youtube.com/watch?v=${e.id}` : null);
+
+            if (!entryUrl) return null;
+
+            entryUrl = normalizeUrl(entryUrl);
+
+            return {
+              url: entryUrl,
+              title: e.title || "Unknown",
+              thumb:
+                e.thumbnail ||
+                (Array.isArray(e.thumbnails) && e.thumbnails.length
+                  ? e.thumbnails[e.thumbnails.length - 1].url
+                  : null),
+              durationSec: Number(e.duration) || 0,
+            };
+          })
+          .filter(Boolean) as ResolvedItem[];
+
         cacheSet(FLAT_CACHE, normalized, items);
         return items;
       }
-    } catch (e) {
-      console.error("[ytdlp] Playlist error:", e);
+    } catch (err) {
+      console.error("[playlist resolve error]", err);
     }
   }
 
-  // 4. Single
+  /* SINGLE */
+
   const single = await probeSingle(normalized);
-  return [{ ...single, url: normalized }];
+
+  return [
+    {
+      ...single,
+      url: normalized,
+    },
+  ];
 }
+
+/* ------------------------------------------------ */
+/* PROBE (title + duration + thumb)                 */
+/* ------------------------------------------------ */
 
 export async function probeSingle(url: string): Promise<ProbeResult> {
-  // Ignorer les placeholders
-  if (url.startsWith("provider:")) return { title: url.split(":").pop() || "Track", durationSec: 0 };
-
-  const cached = cacheGet(PROBE_CACHE, url);
-  if (cached) return cached;
-
-  // Priorité play-dl (plus rapide que spawn yt-dlp)
-  if (play.yt_validate(url) === "video") {
-    try {
-      const info = await play.video_info(url);
-      const res = {
-        title: info.video_details.title || "YouTube Video",
-        thumb: info.video_details.thumbnails.pop()?.url || null,
-        durationSec: info.video_details.durationInSec || 0
-      };
-      cacheSet(PROBE_CACHE, url, res);
-      return res;
-    } catch {}
+  if (url.startsWith("provider:")) {
+    return {
+      title: url.split(":").pop() || "Track",
+      durationSec: 0,
+    };
   }
 
-  // Fallback yt-dlp
-  try {
-    const json = await runYtDlp(["--simulate", "--print-json", url]);
-    const data = JSON.parse(json);
-    const res = {
-      title: data.title || "Lien externe",
-      thumb: data.thumbnail || null,
-      durationSec: Number(data.duration) || 0
+  const normalized = normalizeUrl(url);
+  const cached = cacheGet(PROBE_CACHE, normalized);
+
+  if (cached) return cached;
+
+  if (isYoutubeSearchUrl(normalized)) {
+    return {
+      title: "Recherche YouTube",
+      durationSec: 0,
     };
-    if (data.url) cacheSet(DIRECT_CACHE, url, data.url);
-    cacheSet(PROBE_CACHE, url, res);
+  }
+
+  /* FAST PATH play-dl pour YouTube vidéo */
+
+  if (play.yt_validate(normalized) === "video") {
+    try {
+      const info = await play.video_info(normalized);
+
+      const res: ProbeResult = {
+        title: info.video_details.title || "YouTube",
+        thumb: info.video_details.thumbnails?.slice(-1)[0]?.url || null,
+        durationSec: info.video_details.durationInSec || 0,
+      };
+
+      cacheSet(PROBE_CACHE, normalized, res);
+      return res;
+    } catch {
+      // fallback yt-dlp plus bas
+    }
+  }
+
+  /* yt-dlp fallback */
+
+  try {
+    const json = await runYtDlp(
+      normalized,
+      ["--dump-single-json", normalized],
+      { useCookies: true }
+    );
+
+    const data = JSON.parse(json);
+
+    const res: ProbeResult = {
+      title: data.title || "External",
+      thumb: data.thumbnail || null,
+      durationSec: Number(data.duration) || 0,
+    };
+
+    cacheSet(PROBE_CACHE, normalized, res);
     return res;
   } catch {
-    return { title: "Morceau inconnu", durationSec: 0 };
+    return {
+      title: "Unknown",
+      durationSec: 0,
+    };
   }
 }
 
-export async function getDirectPlayableUrl(url: string): Promise<string | null> {
+/* ------------------------------------------------ */
+/* DIRECT AUDIO URL                                 */
+/* ------------------------------------------------ */
+
+export async function getDirectPlayableUrl(
+  url: string
+): Promise<string | null> {
   if (url.startsWith("provider:")) return null;
 
-  const cached = cacheGet(DIRECT_CACHE, url);
-  if (cached) return cached;
-  
-  try {
-    const direct = await runYtDlp(["-g", "-f", "bestaudio/best", url]);
-    if (direct) cacheSet(DIRECT_CACHE, url, direct);
-    return direct;
-  } catch {
+  const normalized = normalizeUrl(url);
+
+  if (isYoutubeSearchUrl(normalized)) {
+    console.warn("[getDirectPlayableUrl] search URL refused:", normalized);
     return null;
   }
+
+  const cached = cacheGet(DIRECT_CACHE, normalized);
+  if (cached) return cached;
+
+  const tryOnce = async (useCookies: boolean): Promise<string | null> => {
+    try {
+      const direct = await runYtDlp(
+        normalized,
+        ["-g", "-f", "bestaudio/best", normalized],
+        { useCookies }
+      );
+
+      const firstLine = pickFirstHttpLine(direct);
+
+      if (firstLine) {
+        cacheSet(DIRECT_CACHE, normalized, firstLine);
+      }
+
+      return firstLine;
+    } catch {
+      return null;
+    }
+  };
+
+  const withCookies = await tryOnce(true);
+  if (withCookies) return withCookies;
+
+  return await tryOnce(false);
+}
+
+/* ------------------------------------------------ */
+/* ULTRA FAST RESOLVE                               */
+/* ------------------------------------------------ */
+
+export async function resolvePlayable(url: string): Promise<string | null> {
+  if (url.startsWith("provider:")) return null;
+
+  const normalized = normalizeUrl(url);
+
+  if (isYoutubeSearchUrl(normalized)) {
+    console.warn("[resolvePlayable] search URL refused:", normalized);
+    return null;
+  }
+
+  const cached = cacheGet(DIRECT_CACHE, normalized);
+  if (cached) return cached;
+
+  const tryOnce = async (useCookies: boolean): Promise<string | null> => {
+    try {
+      const direct = await runYtDlp(
+        normalized,
+        ["-g", "-f", "bestaudio/best", normalized],
+        { useCookies }
+      );
+
+      const firstLine = pickFirstHttpLine(direct);
+
+      if (firstLine) {
+        cacheSet(DIRECT_CACHE, normalized, firstLine);
+        return firstLine;
+      }
+    } catch (err) {
+      console.error("[resolvePlayable error]", err);
+    }
+
+    return null;
+  };
+
+  const withCookies = await tryOnce(true);
+  if (withCookies) return withCookies;
+
+  return await tryOnce(false);
 }

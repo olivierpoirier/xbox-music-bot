@@ -9,19 +9,29 @@ export type MpvEvent =
   | { type: "playback-restart" }
   | { type: "property-change"; name: string; data: unknown };
 
-export type MpvHandle = {
+export interface MpvHandle {
   proc: ChildProcess;
-  // CHANGEMENT ICI : On ajoute "| null" pour correspondre à l'implémentation
-  sock: net.Socket | null; 
-  send: (cmd: unknown) => Promise<void>;
-  kill: () => void;
-  on: (fn: (ev: MpvEvent) => void) => () => void;
-  waitForPlaybackStart: (timeoutMs?: number) => Promise<void>;
-};
+  sock: net.Socket | null;
+
+  send(cmd: Record<string, any>): Promise<void>;
+  command(cmd: string, args?: any[]): Promise<void>;
+
+  waitForPlaybackStart(timeoutMs?: number): Promise<void>;
+
+  on(listener: (ev: MpvEvent) => void): void;
+  off(listener: (ev: MpvEvent) => void): void;
+  removeListener(listener: (ev: MpvEvent) => void): void;
+
+  kill(): void;
+}
 
 /* ------------------- STATE TYPES ------------------- */
 
-export type Control = { paused: boolean; skipSeq: number; repeat: boolean };
+export type Control = {
+  paused: boolean;
+  skipSeq: number;
+  repeat: boolean;
+};
 
 export type Now = {
   url?: string;
@@ -56,20 +66,29 @@ export interface GlobalState {
 /* ------------------- STATE INSTANCE ------------------- */
 
 export const state: GlobalState = {
-  control: { paused: false, skipSeq: 0, repeat: false },
+  control: {
+    paused: false,
+    skipSeq: 0,
+    repeat: false,
+  },
   now: null,
   queue: [],
 };
 
 export let playing: { item: QueueItem; handle: MpvHandle } | null = null;
-export const setPlaying = (val: typeof playing) => { playing = val; };
 
-export let nextId = { current: 1 };
+export const setPlaying = (val: typeof playing) => {
+  playing = val;
+};
+
+export const nextId = { current: 1 };
+
+/* ------------------- MEDIA TYPES ------------------- */
 
 export type ResolvedItem = {
   url: string;
   title: string;
-  thumb?: string | null; 
+  thumb?: string | null;
   durationSec: number;
 };
 

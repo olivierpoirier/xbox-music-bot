@@ -4,9 +4,9 @@ import net from "net";
 import crypto from "crypto";
 import { EventEmitter } from "events";
 import { MPV_CONFIG } from "./config";
-import { MpvEvent } from "./types";
+import { MpvEvent, MpvHandle } from "./types";
 
-const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /* ------------------- UTILS ------------------- */
 
@@ -17,11 +17,14 @@ function findPlayerBinary(): string {
   const ok = (cmd: string): boolean => {
     try {
       return spawnSync(cmd, ["--version"], { stdio: "ignore" }).status === 0;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   };
-  
+
   if (ok("mpv")) return "mpv";
   if (ok("mpvnet")) return "mpvnet";
+
   throw new Error("❌ Exécutable MPV introuvable. Vérifiez votre installation ou votre fichier .env");
 }
 
@@ -30,21 +33,17 @@ function buildAudioArgs(ipcPath: string): string[] {
     ...MPV_CONFIG.baseArgs,
     `--input-ipc-server=${ipcPath}`,
     `--user-agent=${MPV_CONFIG.userAgent}`,
-    "--msg-level=all=v", 
+    "--msg-level=all=warn,cplayer=info",
   ];
 
   if (MPV_CONFIG.audioFilters) {
     args.push(`--af=${MPV_CONFIG.audioFilters}`);
   }
 
-  args.push(`--ytdl-raw-options=${MPV_CONFIG.ytdlRawOptions.join(",")}`);
-  args.push("--ytdl-format=bestaudio/best");
-  args.push("--ytdl=yes");
-
   if (process.platform === "win32") {
     args.push("--ao=wasapi");
   }
-  
+
   if (MPV_CONFIG.audioDevice && MPV_CONFIG.audioDevice.trim() !== "") {
     args.push(`--audio-device=${MPV_CONFIG.audioDevice}`);
   }
@@ -52,17 +51,13 @@ function buildAudioArgs(ipcPath: string): string[] {
   return args;
 }
 
-/* ------------------- CLASS DEFINITION ------------------- */
+/* ------------------- MPV INSTANCE ------------------- */
 
-/**
- * Interface étendue pour garder la compatibilité avec ton code existant
- * tout en bénéficiant de EventEmitter
- */
 export class MpvInstance extends EventEmitter {
   public proc: ChildProcess;
   public sock: net.Socket | null = null;
   public started = false;
-  
+
   private ipcPath: string;
   private buffer = "";
   private startResolve: (() => void) | null = null;
@@ -75,57 +70,41 @@ export class MpvInstance extends EventEmitter {
     this.setupProcessListeners();
   }
 
-  /**
-   * Initialise la connexion Socket IPC
-   */
   public async initialize(): Promise<void> {
     try {
       this.sock = await this.connectIpc();
       this.setupSocketListeners();
-      
-      // Configuration initiale des observateurs
+
       await this.send({ command: ["observe_property", 1, "duration"] });
       await this.send({ command: ["observe_property", 2, "idle-active"] });
       await this.send({ command: ["observe_property", 3, "time-pos"] });
-    } catch (e) {
+      await this.send({ command: ["set_property", "pause", true] });
+    } catch (err) {
       this.handleCrash();
-      throw e;
+      throw err;
     }
   }
 
-  /**
-   * Méthode de compatibilité pour ton player.ts
-   * Permet d'écouter tous les événements typés via une seule callback
-   * Retourne une fonction de nettoyage (dispose)
-   */
-  public onEvent(fn: (ev: MpvEvent) => void): () => void {
-    const wrapper = (arg: any) => fn(arg);
-    this.on("mpv-event", wrapper);
-    return () => this.off("mpv-event", wrapper);
-  }
-
-  /**
-   * Envoi d'une commande JSON brute à MPV
-   */
   public send(cmd: Record<string, any>): Promise<void> {
     return new Promise<void>((resolve) => {
-      if (!this.sock || this.sock.destroyed || !this.sock.writable) return resolve();
-      try { 
-        this.sock.write(JSON.stringify(cmd) + "\n", () => resolve()); 
-      } catch { 
-        resolve(); 
+      if (!this.sock || this.sock.destroyed || !this.sock.writable) {
+        return resolve();
+      }
+
+      try {
+        this.sock.write(JSON.stringify(cmd) + "\n", () => resolve());
+      } catch {
+        resolve();
       }
     });
   }
 
-  /**
-   * Arrêt propre
-   */
-  public kill() {
+  public kill(): void {
     this.removeAllListeners();
-    try { 
+
+    try {
       if (this.sock) {
-        this.sock.destroy(); 
+        this.sock.destroy();
         this.sock = null;
       }
     } catch {}
@@ -139,86 +118,117 @@ export class MpvInstance extends EventEmitter {
     }
   }
 
-  /**
-   * Attend que la lecture commence réellement
-   */
   public waitForPlaybackStart(timeoutMs = MPV_CONFIG.globalStartTimeoutMs): Promise<void> {
     if (this.started) return Promise.resolve();
-    
-    return new Promise<void>((res, rej) => {
-      const to = setTimeout(() => {
+
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
         this.startResolve = null;
-        rej(new Error(`Timeout lecture mpv ${timeoutMs}ms`));
+        reject(new Error(`Timeout lecture mpv ${timeoutMs}ms`));
       }, timeoutMs);
 
-      this.startResolve = () => { 
-        clearTimeout(to); 
-        res(); 
+      this.startResolve = () => {
+        clearTimeout(timeout);
+        resolve();
       };
     });
   }
 
-  // --- PRIVATE HELPERS ---
+  /* ------------------- PRIVATE ------------------- */
 
-  private setupProcessListeners() {
+  private setupProcessListeners(): void {
     const capture = (data: Buffer) => {
-      const s = data.toString().trim();
-      if (!s) return;
-      this.lastLogs.push(s);
+      const line = data.toString().trim();
+      if (!line) return;
+
+      if (
+        line.includes("segment") ||
+        line.includes("Opening 'https") ||
+        line.includes("libavformat")
+      ) {
+        this.lastLogs.push(`[SILENT] ${line}`);
+        if (this.lastLogs.length > 50) this.lastLogs.shift();
+        return;
+      }
+
+      if (line.includes("403 Forbidden")) {
+        console.error("🛑 [MPV] Erreur 403 pendant la lecture du flux audio.");
+        return;
+      }
+
+      if (line.includes("Failed to open")) {
+        console.warn("⚠️ [MPV] Échec d'ouverture d'un flux/segment.");
+        return;
+      }
+
+      this.lastLogs.push(line);
       if (this.lastLogs.length > 50) this.lastLogs.shift();
-      console.log(`[MPV-PROC] ${s}`);
+
+      if (line.includes("[cplayer]") || line.includes("Error")) {
+        console.log(`[MPV-CORE] ${line}`);
+      }
     };
 
     this.proc.stdout?.on("data", capture);
     this.proc.stderr?.on("data", capture);
-    this.proc.on("error", (err) => console.error(`[SYSTEM-ERROR] Impossible de lancer MPV :`, err));
+    this.proc.on("error", (err) => {
+      console.error("[SYSTEM-ERROR] Impossible de lancer MPV :", err);
+    });
   }
 
-  private setupSocketListeners() {
+  private setupSocketListeners(): void {
     if (!this.sock) return;
 
     this.sock.setEncoding("utf8");
+
     this.sock.on("data", (chunk: string) => {
       this.buffer += chunk;
-      
-      // Traitement ligne par ligne
+
       const lines = this.buffer.split("\n");
-      this.buffer = lines.pop() || ""; // Garde le fragment incomplet pour le prochain chunk
+      this.buffer = lines.pop() || "";
 
       for (const line of lines) {
         if (!line.trim()) continue;
+
         try {
           this.processMessage(JSON.parse(line));
-        } catch {}
+        } catch {
+          // ignore les lignes JSON incomplètes
+        }
       }
     });
   }
 
-  private processMessage(obj: any) {
+  private processMessage(obj: any): void {
     let eventToEmit: MpvEvent | null = null;
 
     if (obj?.event === "file-loaded") {
       eventToEmit = { type: "file-loaded" };
-    }
-    else if (obj?.event === "playback-restart") {
-      if (!this.started) { this.started = true; this.startResolve?.(); }
+    } else if (obj?.event === "playback-restart") {
+      if (!this.started) {
+        this.started = true;
+        this.startResolve?.();
+      }
       eventToEmit = { type: "playback-restart" };
-    }
-    else if (obj?.event === "property-change" && typeof obj.name === "string") {
-      eventToEmit = { type: "property-change", name: obj.name, data: obj.data };
-      
-      // Détection de démarrage alternative
-      if ((obj.name === "time-pos" || obj.name === "duration") && !this.started && typeof obj.data === "number") {
-        this.started = true; 
+    } else if (obj?.event === "property-change" && typeof obj.name === "string") {
+      eventToEmit = {
+        type: "property-change",
+        name: obj.name,
+        data: obj.data,
+      };
+
+      if (
+        (obj.name === "time-pos" || obj.name === "duration") &&
+        !this.started &&
+        typeof obj.data === "number"
+      ) {
+        this.started = true;
         this.startResolve?.();
       }
     }
 
     if (eventToEmit) {
-      // Émet l'événement "générique" pour la compatibilité avec player.ts
       this.emit("mpv-event", eventToEmit);
-      
-      // Émet aussi des événements spécifiques pour une utilisation plus fine si besoin
       this.emit(eventToEmit.type, eventToEmit);
     }
   }
@@ -226,25 +236,36 @@ export class MpvInstance extends EventEmitter {
   private async connectIpc(timeoutMs = MPV_CONFIG.ipcConnectTimeoutMs): Promise<net.Socket> {
     const start = Date.now();
     let delay = 100;
-    
+
     while (Date.now() - start < timeoutMs) {
-      if (this.proc.exitCode !== null) throw new Error("MPV a crashé avant connexion IPC");
-      
+      if (this.proc.exitCode !== null) {
+        throw new Error("MPV a crashé avant connexion IPC");
+      }
+
       try {
-        const s = net.connect(this.ipcPath as any);
-        return await new Promise((res, rej) => {
-          s.once("connect", () => { s.removeAllListeners("error"); res(s); });
-          s.once("error", (e) => { s.destroy(); rej(e); });
+        const socket = net.connect(this.ipcPath as any);
+
+        return await new Promise<net.Socket>((resolve, reject) => {
+          socket.once("connect", () => {
+            socket.removeAllListeners("error");
+            resolve(socket);
+          });
+
+          socket.once("error", (err) => {
+            socket.destroy();
+            reject(err);
+          });
         });
       } catch {
         await wait(delay);
         delay = Math.min(delay * 1.5, 500);
       }
     }
+
     throw new Error("Timeout connexion IPC MPV");
   }
 
-  private handleCrash() {
+  private handleCrash(): void {
     if (this.proc.pid) {
       console.error("\n--- ANALYSE DU CRASH MPV ---");
       console.error(this.lastLogs.slice(-10).join("\n"));
@@ -254,67 +275,99 @@ export class MpvInstance extends EventEmitter {
   }
 }
 
-/* ------------------- CORE FUNCTION ------------------- */
+/* ------------------- START ------------------- */
 
-// On définit un type alias pour éviter de casser les imports ailleurs
-export type MpvHandle = {
-  proc: ChildProcess;
-  sock: net.Socket | null;
-  send: (cmd: any) => Promise<void>;
-  kill: () => void;
-  on: (fn: (ev: MpvEvent) => void) => () => void; // Signature compatible old-school
-  waitForPlaybackStart: (timeoutMs?: number) => Promise<void>;
-};
-
-/**
- * Démarre le moteur MPV et retourne l'instance optimisée
- */
 export async function startMpv(url: string): Promise<MpvHandle> {
   const bin = findPlayerBinary();
   const id = crypto.randomBytes(4).toString("hex");
-  const ipcPath = process.platform === "win32" ? `\\\\.\\pipe\\xmb_ipc_${id}` : `/tmp/xmb_mpv_${id}.sock`;
+  const ipcPath =
+    process.platform === "win32"
+      ? `\\\\.\\pipe\\xmb_ipc_${id}`
+      : `/tmp/xmb_mpv_${id}.sock`;
 
-  // Nettoyage socket Linux/Mac
-  try { 
+  try {
     if (process.platform !== "win32" && fs.existsSync(ipcPath)) {
       fs.unlinkSync(ipcPath);
-    } 
+    }
   } catch {}
 
   const args = buildAudioArgs(ipcPath);
   if (url?.trim()) args.push(url);
-  
+
   console.log(`[DEBUG] Cmd: ${bin} ${args.join(" ")}`);
+
   const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
 
-  // Instanciation de la classe optimisée
   const instance = new MpvInstance(proc, ipcPath);
   await instance.initialize();
 
-  // On retourne une structure compatible avec l'interface attendue par player.ts
-  // Tout en utilisant la puissance de la classe en dessous.
   return {
     proc: instance.proc,
     sock: instance.sock,
+
     send: instance.send.bind(instance),
-    kill: instance.kill.bind(instance),
+
+    command: async (cmd: string, args?: any[]) => {
+      const payload = args ? [cmd, ...args] : [cmd];
+      await instance.send({ command: payload });
+    },
+
     waitForPlaybackStart: instance.waitForPlaybackStart.bind(instance),
-    // Mapping crucial : on redirige .on vers notre méthode de compatibilité
-    on: instance.onEvent.bind(instance) 
+
+    on: (listener) => {
+      instance.on("mpv-event", listener);
+    },
+
+    off: (listener) => {
+      instance.off("mpv-event", listener);
+    },
+
+    removeListener: (listener) => {
+      instance.off("mpv-event", listener);
+    },
+
+    kill: instance.kill.bind(instance),
   };
 }
 
-/* ------------------- COMMANDES HELPERS ------------------- */
+/* ------------------- HELPERS ------------------- */
 
-async function safeSend(h: MpvHandle, cmd: any, context: string) {
-  // @ts-ignore - Le type MpvHandle défini ci-dessus est compatible structurellement
+async function safeSend(h: MpvHandle, cmd: Record<string, any>, context: string) {
   if (!h.sock || h.sock.destroyed || !h.sock.writable) return;
-  try { await h.send(cmd); } catch (e) { console.error(`[mpv] ${context} error:`, e); }
+
+  try {
+    await h.send(cmd);
+  } catch (err) {
+    console.error(`[mpv] ${context} error:`, err);
+  }
 }
 
-export const mpvPause = (h: MpvHandle, on: boolean) => safeSend(h, { command: ["set_property", "pause", on] }, "pause");
-export const mpvStop = (h: MpvHandle) => safeSend(h, { command: ["stop"] }, "stop");
-export const mpvQuit = (h: MpvHandle) => safeSend(h, { command: ["quit"] }, "quit");
-export const mpvSetLoopFile = (h: MpvHandle, on: boolean) => safeSend(h, { command: ["set_property", "loop-file", on ? "inf" : "no"] }, "loop");
-export const mpvSeekAbsolute = (h: MpvHandle, sec: number) => safeSend(h, { command: ["set_property", "time-pos", Math.max(0, sec)] }, "seek");
-export const mpvLoadFile = (h: MpvHandle, url: string, append = false) => safeSend(h, { command: ["loadfile", url, append ? "append" : "replace"] }, "load");
+export const mpvPause = (h: MpvHandle, on: boolean) =>
+  safeSend(h, { command: ["set_property", "pause", on] }, "pause");
+
+export const mpvStop = (h: MpvHandle) =>
+  safeSend(h, { command: ["stop"] }, "stop");
+
+export const mpvQuit = (h: MpvHandle) =>
+  safeSend(h, { command: ["quit"] }, "quit");
+
+export const mpvSetLoopFile = (h: MpvHandle, on: boolean) =>
+  safeSend(
+    h,
+    { command: ["set_property", "loop-file", on ? "inf" : "no"] },
+    "loop"
+  );
+
+export const mpvSeekAbsolute = (h: MpvHandle, sec: number) =>
+  safeSend(
+    h,
+    { command: ["set_property", "time-pos", Math.max(0, sec)] },
+    "seek"
+  );
+
+export const mpvLoadFile = (h: MpvHandle, url: string, append = false) =>
+  safeSend(
+    h,
+    { command: ["loadfile", url, append ? "append" : "replace"] },
+    "load"
+  );

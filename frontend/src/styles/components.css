@@ -1,0 +1,324 @@
+/* =========================
+   PANELS / BORDERS / BUTTONS
+   ========================= */
+
+.organic-panel {
+  border-radius: 30px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
+    var(--panel);
+  backdrop-filter: blur(18px);
+}
+
+.organic-panel-soft {
+  border-radius: 26px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01)),
+    rgba(26, 34, 27, 0.68);
+  backdrop-filter: blur(16px);
+}
+
+.neon-glow {
+  box-shadow:
+    0 0 24px color-mix(in oklab, var(--c2) 18%, transparent),
+    0 0 44px color-mix(in oklab, var(--c1) 12%, transparent);
+}
+
+.themed-border {
+  position: relative;
+}
+
+.themed-border::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 2px;
+  background: linear-gradient(135deg, var(--c1), var(--c2));
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.95;
+}
+
+.rainbow-border {
+  position: relative;
+}
+
+.rainbow-border::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(from 0deg, #22d3ee, #a78bfa, #f472b6, #22d3ee);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.theme-active-button {
+  background-color: var(--c1);
+  color: var(--ink);
+  font-weight: 700;
+  transition:
+    transform 0.15s ease-out,
+    box-shadow 0.15s ease-out,
+    filter 0.15s ease;
+  box-shadow: 0 4px 12px color-mix(in oklab, var(--c1) 30%, transparent);
+}
+
+.theme-active-button:hover:not(:disabled) {
+  filter: saturate(1.15) brightness(1.05);
+  transform: translateY(-1px);
+}
+
+.theme-active-button:active:not(:disabled) {
+  filter: saturate(0.95) brightness(0.9);
+  transform: translateY(1px);
+  box-shadow: 0 2px 8px color-mix(in oklab, var(--c1) 40%, transparent);
+}
+
+.theme-rainbow .theme-active-button {
+  background: linear-gradient(90deg, #22d3ee, #a78bfa, #f472b6, #22d3ee);
+  background-size: 200% 100%;
+  animation: sliderGlow 6s linear infinite, hue 10s linear infinite;
+  box-shadow:
+    0 0 12px rgba(34, 211, 238, 0.6),
+    0 0 24px rgba(244, 114, 182, 0.4);
+  color: white;
+}
+
+.themed-danger-button {
+  background: color-mix(in oklab, var(--c2) 16%, transparent);
+  color: color-mix(in oklab, var(--c2) 55%, white 10%);
+  border: 1px solid color-mix(in oklab, var(--c2) 30%, transparent);
+  transition: 160ms ease;
+}
+
+.themed-danger-button:hover {
+  background: color-mix(in oklab, var(--c2) 22%, transparent);
+  border-color: color-mix(in oklab, var(--c2) 45%, transparent);
+}
+
+.themed-secondary-button {
+  background: color-mix(in oklab, var(--c1) 10%, transparent);
+  color: var(--ink);
+  border: 1px solid color-mix(in oklab, var(--c1) 22%, transparent);
+  transition: 160ms ease;
+}
+
+.themed-secondary-button:hover {
+  background: color-mix(in oklab, var(--c1) 16%, transparent);
+}
+
+/* =========================
+   RANGE
+   ========================= */
+
+.themed-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--c1), var(--c2));
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+
+.themed-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--c1), var(--c2));
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+
+.theme-rainbow .themed-range::-webkit-slider-thumb {
+  animation: hue 10s linear infinite;
+}
+
+.theme-rainbow .themed-range::-moz-range-thumb {
+  animation: hue 10s linear infinite;
+}
+
+/* =========================
+   CUSTOM SCROLL
+   ========================= */
+
+.custom-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--c1) 45%, transparent) transparent;
+}
+
+.custom-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.custom-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--c1) 35%, #000 30%);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.custom-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--c1) 55%, #000 20%);
+  background-clip: padding-box;
+}
+
+/* =========================
+   MARQUEE
+   ========================= */
+
+@keyframes queue-marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-51%); }
+}
+
+.marquee-container {
+  mask-image: linear-gradient(to right, black 80%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black 80%, transparent 100%);
+  overflow: hidden;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.group:hover .marquee-content,
+.group:active .marquee-content {
+  display: inline-block;
+  animation: queue-marquee 12s linear infinite;
+  animation-delay: 0.5s;
+  padding-right: 2rem;
+}
+
+.marquee-content {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* =========================
+   SPECTRUM BARS
+   ========================= */
+
+.spectrum-bars {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(var(--bars-count), minmax(3px, 1fr));
+  align-items: end;
+  gap: clamp(2px, 0.35vw, 5px);
+}
+
+.spectrum-bar-shell {
+  height: 100%;
+  display: flex;
+  align-items: end;
+  min-width: 0;
+}
+
+.spectrum-bar-fill {
+  width: 100%;
+  min-height: 6px;
+  border-radius: 999px 999px 3px 3px;
+  transition: height 72ms linear;
+  opacity: 0.95;
+}
+
+@media (min-width: 1280px) {
+  .spectrum-bars {
+    grid-template-columns: repeat(var(--bars-count), minmax(3px, 7px));
+    justify-content: start;
+  }
+}
+
+/* =========================
+   PREMIUM OVERRIDES
+   ========================= */
+
+.theme-premium .neon-glow {
+  box-shadow: none !important;
+}
+
+.theme-premium .themed-border::before {
+  background: rgba(255, 255, 255, 0.08) !important;
+  opacity: 1 !important;
+}
+
+.theme-premium .theme-active-button {
+  background: #e5e7eb !important;
+  color: #0a0a0a !important;
+  box-shadow: none !important;
+  font-weight: 700;
+}
+
+.theme-premium .theme-active-button:hover:not(:disabled) {
+  filter: brightness(0.96);
+  transform: translateY(-1px);
+}
+
+.theme-premium .theme-active-button:active:not(:disabled) {
+  filter: brightness(0.9);
+  transform: translateY(1px);
+  box-shadow: none !important;
+}
+
+.theme-premium .themed-secondary-button,
+.theme-premium .themed-danger-button {
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: #f3f4f6 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.theme-premium .themed-secondary-button:hover,
+.theme-premium .themed-danger-button:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+.theme-premium .bg-panel {
+  background: #0a0a0a !important;
+}
+
+.theme-premium .organic-panel,
+.theme-premium .organic-panel-soft {
+  background: #0d0d0d !important;
+  backdrop-filter: none !important;
+}
+
+.theme-premium .custom-scroll {
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.theme-premium .custom-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.theme-premium .custom-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+  background-clip: padding-box;
+}

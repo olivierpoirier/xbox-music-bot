@@ -1,17 +1,30 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Music2, ListMusic, History, Info } from "lucide-react";
+
 import AppHeader from "./components/AppHeader";
+import AppFooter from "./components/AppFooter";
 import FormInputs from "./components/FormInputs";
 import NowPlaying from "./components/NowPlaying";
 import QueueList from "./components/QueueList";
 import Toast from "./components/Toast";
 import PlayerBar from "./components/PlayerBar";
 import ThemeDock from "./components/ThemeDock";
+import ThemeScene from "./components/ThemeScene";
+import SystemAlert from "./components/SystemAlert";
+
+import SectionCard, { SectionTab } from "./components/SectionCard";
+import HistoryList from "./components/HistoryList";
+import SupportedLinksHelp from "./components/SupportedLinksHelp";
 
 import useLiveQueue from "./hooks/useLiveQueue";
 import { pickUrlLike } from "./lib/api";
-import { type ThemeName, type ThemeMode, THEME_ORDER, THEMES_SWATCH } from "./lib/themes";
+import {
+  type ThemeName,
+  type ThemeMode,
+  THEME_ORDER,
+  isThemeName,
+} from "./lib/themes";
 import type { Now, QueueItem, Control } from "./types";
-import SystemAlert from "./components/SystemAlert";
 
 type Command =
   | "pause"
@@ -23,57 +36,135 @@ type Command =
   | "seek"
   | "seek_abs";
 
+type CollapsedSections = {
+  nowPlaying: boolean;
+  queue: boolean;
+  history: boolean;
+  help: boolean;
+};
+
 export default function App() {
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
 
   const [mode, setMode] = useState<ThemeMode>(() => {
-    try { return (localStorage.getItem("xmb_theme_mode") as ThemeMode) || "color"; }
-    catch (err) { console.warn("Impossible de lire xmb_theme_mode", err); return "color"; }
+    try {
+      const stored = localStorage.getItem("xmb_theme_mode");
+      return stored === "rainbow" || stored === "color" ? stored : "color";
+    } catch (err) {
+      console.warn("Impossible de lire xmb_theme_mode", err);
+      return "color";
+    }
   });
 
   const [theme, setTheme] = useState<ThemeName>(() => {
-    try { return (localStorage.getItem("xmb_theme") as ThemeName) || "classic"; }
-    catch (err) { console.warn("Impossible de lire xmb_theme", err); return "classic"; }
+    try {
+      const stored = localStorage.getItem("xmb_theme");
+      return stored && isThemeName(stored) ? stored : "retrowave";
+    } catch (err) {
+      console.warn("Impossible de lire xmb_theme", err);
+      return "retrowave";
+    }
   });
 
-  const { 
-    state, 
-    toast, 
-    setToast, 
-    systemError, // Récupéré ici
-    play, 
-    command, 
-    busy, 
-    clear, 
-    setBusy, 
-    reorderQueue, 
-    removeQueueItem 
+  const [collapsed, setCollapsed] = useState<CollapsedSections>(() => ({
+    nowPlaying: false,
+    queue: false,
+    history: false,
+    help: true,
+  }));
+
+  const [themeTransitioning, setThemeTransitioning] = useState(false);
+  const transitionTimeoutRef = useRef<number | null>(null);
+
+  const {
+    state,
+    toast,
+    setToast,
+    systemError,
+    play,
+    command,
+    busy,
+    clear,
+    setBusy,
+    reorderQueue,
+    removeQueueItem,
+    requeueHistoryItem,
   } = useLiveQueue();
 
-  // --- LocalStorage ---
-  useEffect(() => { try { localStorage.setItem("xmb_theme_mode", mode); } catch (err) { console.warn(err); } }, [mode]);
-  useEffect(() => { try { localStorage.setItem("xmb_theme", theme); } catch (err) { console.warn(err); } }, [theme]);
-  useEffect(() => { try { const n = localStorage.getItem("xmb_name"); if (n) setName(n); } catch (err) { console.warn(err); setToast("Impossible de charger ton nom sauvegardé."); } }, [setToast]);
-  useEffect(() => { try { localStorage.setItem("xmb_name", name || ""); } catch (err) { console.warn(err); } }, [name]);
-
-  // --- Actions ---
-  const pasteInto = useCallback(async (setter: (s: string) => void, transform?: (s: string) => string) => {
+  useEffect(() => {
     try {
-      const text = await navigator.clipboard.readText();
-      setter(transform ? transform(text) : text);
-      setToast("Collé depuis le presse-papiers ✅");
+      localStorage.setItem("xmb_theme_mode", mode);
     } catch (err) {
-      console.warn("Clipboard inaccessible", err);
-      setToast("Impossible de lire le presse-papiers.");
+      console.warn(err);
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("xmb_theme", theme);
+    } catch (err) {
+      console.warn(err);
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    try {
+      const n = localStorage.getItem("xmb_name");
+      if (n) setName(n);
+    } catch (err) {
+      console.warn(err);
+      setToast("Impossible de charger ton nom sauvegardé.");
     }
   }, [setToast]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem("xmb_name", name || "");
+    } catch (err) {
+      console.warn(err);
+    }
+  }, [name]);
+
+  useEffect(() => {
+    return () => {
+      if (transitionTimeoutRef.current) {
+        window.clearTimeout(transitionTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const pasteInto = useCallback(
+    async (setter: (s: string) => void, transform?: (s: string) => string) => {
+      try {
+        const text = await navigator.clipboard.readText();
+        setter(transform ? transform(text) : text);
+        setToast("Collé depuis le presse-papiers ✅");
+      } catch (err) {
+        console.warn("Clipboard inaccessible", err);
+        setToast("Impossible de lire le presse-papiers.");
+      }
+    },
+    [setToast]
+  );
+
   const addToQueue = useCallback(() => {
     try {
-      const u = pickUrlLike(url);
-      if (!/^https?:\/\//i.test(u)) { setToast("URL invalide ❌"); return; }
-      play(u, name || "anon");
+      const raw = url.trim();
+      if (!raw) {
+        setToast("Entrée vide ❌");
+        return;
+      }
+
+      const looksLikeUrl = /^https?:\/\//i.test(raw);
+      const finalInput = looksLikeUrl ? pickUrlLike(raw) : raw;
+
+      if (looksLikeUrl && !/^https?:\/\//i.test(finalInput)) {
+        setToast("URL invalide ❌");
+        return;
+      }
+
+      play(finalInput, name.trim() || "anon");
       setUrl("");
     } catch (err) {
       console.error("Erreur addToQueue", err);
@@ -81,64 +172,280 @@ export default function App() {
     }
   }, [url, name, play, setToast]);
 
-  const sendCommand = useCallback((cmd: Command, arg?: number) => {
-    try { command(cmd, arg); window.setTimeout(() => setBusy(null), 4000); }
-    catch (err) { console.error(`Commande échouée (${cmd})`, err); setBusy(null); setToast(`Commande échouée: ${cmd}`); }
-  }, [command, setBusy, setToast]);
+  const sendCommand = useCallback(
+    (cmd: Command, arg?: number) => {
+      try {
+        command(cmd, arg);
+        window.setTimeout(() => setBusy(null), 4000);
+      } catch (err) {
+        console.error(`Commande échouée (${cmd})`, err);
+        setBusy(null);
+        setToast(`Commande échouée: ${cmd}`);
+      }
+    },
+    [command, setBusy, setToast]
+  );
 
   const clearWithPass = useCallback(() => {
-    try { clear(); } catch (err) { console.error("Erreur clear queue", err); setToast("Impossible de vider la file."); }
+    try {
+      clear();
+    } catch (err) {
+      console.error("Erreur clear queue", err);
+      setToast("Impossible de vider la file.");
+    }
   }, [clear, setToast]);
 
-  // --- Derived State ---
-  const control: Control = state.control ?? { paused: false, skipSeq: 0, repeat: false };
+  const collapseSection = useCallback((key: keyof CollapsedSections) => {
+    setCollapsed((prev) => ({ ...prev, [key]: true }));
+  }, []);
+
+  const openSection = useCallback((key: keyof CollapsedSections) => {
+    setCollapsed((prev) => ({ ...prev, [key]: false }));
+  }, []);
+
+  const switchThemeSmooth = useCallback(
+    (nextMode: ThemeMode, nextTheme?: ThemeName) => {
+      setThemeTransitioning(true);
+
+      if (transitionTimeoutRef.current) {
+        window.clearTimeout(transitionTimeoutRef.current);
+      }
+
+      window.setTimeout(() => {
+        if (nextMode === "rainbow") {
+          setMode("rainbow");
+        } else if (nextTheme) {
+          setTheme(nextTheme);
+          setMode("color");
+        }
+
+        transitionTimeoutRef.current = window.setTimeout(() => {
+          setThemeTransitioning(false);
+        }, 280);
+      }, 220);
+    },
+    []
+  );
+
+  const pickRainbow = useCallback(() => {
+    switchThemeSmooth("rainbow");
+  }, [switchThemeSmooth]);
+
+  const pickNextColor = useCallback(() => {
+    try {
+      const currentIndex = THEME_ORDER.indexOf(theme);
+      const next =
+        THEME_ORDER[(currentIndex + 1) % THEME_ORDER.length] ?? "retrowave";
+      switchThemeSmooth("color", next);
+    } catch (err) {
+      console.error("Erreur changement de thème", err);
+      setToast("Impossible de changer le thème.");
+    }
+  }, [theme, setToast, switchThemeSmooth]);
+
+  const control: Control = state.control ?? {
+    paused: false,
+    skipSeq: 0,
+    repeat: false,
+  };
+
   const paused = Boolean(control.paused);
   const repeat = Boolean(control.repeat);
   const now: Now | null = state.now ?? null;
   const queue: QueueItem[] = state.queue ?? [];
-  const rainbow = mode === "rainbow";
-  const rootThemeClass = rainbow ? "theme-rainbow" : `theme-${theme}`;
-  const { c1, c2 } = THEMES_SWATCH[theme];
+  const history: QueueItem[] = state.history ?? [];
 
-  // --- Theme Helpers ---
-  const pickRainbow = () => setMode("rainbow");
-  const pickNextColor = () => {
-    try { const next = THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length]; setTheme(next); setMode("color"); }
-    catch (err) { console.error("Erreur changement de thème", err); setToast("Impossible de changer le thème."); }
-  };
+  const rainbow = mode === "rainbow";
+
+  const rootThemeClass = useMemo(
+    () => (rainbow ? "theme-rainbow" : `theme-${theme}`),
+    [rainbow, theme]
+  );
 
   return (
-    <div className={`min-h-screen bg-bg text-ink ${rootThemeClass} pb-28 relative`}>
+    <div
+      className={`min-h-screen bg-bg text-ink ${rootThemeClass} pb-28 relative overflow-hidden`}
+    >
+      <ThemeScene
+        theme={theme}
+        rainbow={rainbow}
+        coverUrl={state.now?.thumb ?? null}
+      />
 
-      <SystemAlert isOpen={systemError} rainbow={rainbow} />
-      {/* Header */}
-      <AppHeader theme={theme} rainbow={rainbow} onPickRainbow={pickRainbow} onNextColor={pickNextColor} />
+      <div className="relative z-10">
+        <SystemAlert isOpen={systemError} rainbow={rainbow} />
 
-      {/* Toasts */}
-      {toast && (
-        <Toast 
-          message={toast} 
-          clear={() => setToast("")} 
-          rainbow={rainbow} 
+        <AppHeader
+          theme={theme}
+          rainbow={rainbow}
+          onPickRainbow={pickRainbow}
+          onNextColor={pickNextColor}
         />
-      )}
 
-      <main className="max-w-6xl mx-auto px-4 md:px-6 py-6">
-        <FormInputs url={url} setUrl={setUrl} name={name} setName={setName} addToQueue={addToQueue} pasteInto={pasteInto} busy={busy} rainbow={rainbow} />
+        {toast && (
+          <Toast
+            message={toast}
+            clear={() => setToast("")}
+            rainbow={rainbow}
+          />
+        )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-          <NowPlaying now={now} paused={paused} repeat={repeat} busy={busy} rainbow={rainbow} eqColorFrom={!rainbow ? c1 : undefined} eqColorTo={!rainbow ? c2 : undefined} />
-          <QueueList queue={queue} busy={busy} rainbow={rainbow} onSkipGroup={() => sendCommand("skip_group")} onClear={clearWithPass} onReorder={reorderQueue} onRemove={removeQueueItem} />
-        </div>
+        <main className="max-w-7xl mx-auto px-4 md:px-6 py-6">
+          <div className="mb-4 flex flex-wrap gap-2">
+            {collapsed.nowPlaying && (
+              <SectionTab
+                title="Lecture"
+                icon={<Music2 className="w-4 h-4" />}
+                onOpen={() => openSection("nowPlaying")}
+                rainbow={rainbow}
+              />
+            )}
 
-        <footer className="text-center mt-6 text-xs text-muted">
-          Bot de musique créé par Olivier Poirier, 2025
-        </footer>
-      </main>
+            {collapsed.queue && (
+              <SectionTab
+                title="File"
+                icon={<ListMusic className="w-4 h-4" />}
+                onOpen={() => openSection("queue")}
+                rainbow={rainbow}
+              />
+            )}
 
-      {/* Dock & Player */}
-      <ThemeDock value={theme} mode={mode} onPick={(m, t) => m === "rainbow" ? pickRainbow() : setTheme(t || theme)} />
-      <PlayerBar now={now} paused={paused} repeat={repeat} busy={busy} rainbow={rainbow} sendCommand={sendCommand} />
+            {collapsed.history && (
+              <SectionTab
+                title="Précédentes"
+                icon={<History className="w-4 h-4" />}
+                onOpen={() => openSection("history")}
+                rainbow={rainbow}
+              />
+            )}
+
+            {collapsed.help && (
+              <SectionTab
+                title="Aide"
+                icon={<Info className="w-4 h-4" />}
+                onOpen={() => openSection("help")}
+                rainbow={rainbow}
+              />
+            )}
+          </div>
+
+          <FormInputs
+            url={url}
+            setUrl={setUrl}
+            name={name}
+            setName={setName}
+            addToQueue={addToQueue}
+            pasteInto={pasteInto}
+            busy={busy}
+            rainbow={rainbow}
+            theme={theme}
+          />
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mt-4 items-start">
+            <div className="xl:col-span-2 flex flex-col gap-4 min-w-0">
+              <SectionCard
+                id="now"
+                title="Lecture en cours"
+                icon={<Music2 className="w-4 h-4" />}
+                isCollapsed={collapsed.nowPlaying}
+                onCollapse={() => collapseSection("nowPlaying")}
+                className="min-w-0"
+                rainbow={rainbow}
+              >
+                <NowPlaying
+                  now={now}
+                  paused={paused}
+                  repeat={repeat}
+                  busy={busy}
+                  rainbow={rainbow}
+                  theme={theme}
+                />
+              </SectionCard>
+
+              <SectionCard
+                id="history"
+                title="Musiques précédentes"
+                icon={<History className="w-4 h-4" />}
+                isCollapsed={collapsed.history}
+                onCollapse={() => collapseSection("history")}
+                className="min-w-0"
+                rainbow={rainbow}
+              >
+                <HistoryList
+                  items={history}
+                  theme={theme}
+                  rainbow={rainbow}
+                  onReAdd={(id) => requeueHistoryItem(id)}
+                />
+              </SectionCard>
+
+              <SectionCard
+                id="help"
+                title="Quels liens vers des audios que ce bot peut utiliser ?"
+                icon={<Info className="w-4 h-4" />}
+                isCollapsed={collapsed.help}
+                onCollapse={() => collapseSection("help")}
+                className="min-w-0"
+                rainbow={rainbow}
+              >
+                <SupportedLinksHelp theme={theme} rainbow={rainbow} />
+              </SectionCard>
+            </div>
+
+            <div className="xl:sticky xl:top-24 min-w-0">
+              <SectionCard
+                id="queue"
+                title="File d’attente"
+                icon={<ListMusic className="w-4 h-4" />}
+                isCollapsed={collapsed.queue}
+                onCollapse={() => collapseSection("queue")}
+                className="min-w-0"
+                rainbow={rainbow}
+              >
+                <QueueList
+                  queue={queue}
+                  busy={busy}
+                  rainbow={rainbow}
+                  theme={theme}
+                  onSkipGroup={() => sendCommand("skip_group")}
+                  onClear={clearWithPass}
+                  onReorder={reorderQueue}
+                  onRemove={removeQueueItem}
+                  onDropHistoryItem={(id, targetIndex) =>
+                    requeueHistoryItem(id, targetIndex)
+                  }
+                />
+              </SectionCard>
+            </div>
+          </div>
+
+          <AppFooter rainbow={rainbow} />
+        </main>
+
+        <ThemeDock
+          value={theme}
+          mode={mode}
+          onPick={(m, t) => {
+            switchThemeSmooth(m, t);
+          }}
+        />
+
+        <PlayerBar
+          now={now}
+          paused={paused}
+          repeat={repeat}
+          busy={busy}
+          rainbow={rainbow}
+          theme={theme}
+          sendCommand={sendCommand}
+        />
+      </div>
+
+      <div
+        className={`pointer-events-none fixed inset-0 z-[9998] bg-black transition-opacity duration-300 ${
+          themeTransitioning ? "opacity-100" : "opacity-0"
+        }`}
+      />
     </div>
   );
 }

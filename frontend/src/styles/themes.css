@@ -1,0 +1,98 @@
+/* =========================
+   THEMES
+   ========================= */
+
+.theme-retrowave {
+  --c1: #22d3ee;
+  --c2: #f472b6;
+  --bg: #090412;
+  --panel: rgba(20, 11, 29, 0.82);
+  --ink: #f5f3ff;
+  --muted: #a78fbf;
+}
+
+.theme-adventurer {
+  --c1: #84cc16;
+  --c2: #d4a373;
+  --bg: #0f1510;
+  --panel: rgba(24, 33, 26, 0.8);
+  --ink: #f7f2e8;
+  --muted: #b8b19b;
+}
+
+.theme-floral {
+  --c1: #f9a8d4;
+  --c2: #86efac;
+  --bg: #140f16;
+  --panel: rgba(32, 24, 35, 0.8);
+  --ink: #fff7fb;
+  --muted: #d6b8ca;
+}
+
+.theme-premium {
+  --c1: #d6d6d6;
+  --c2: #7a7a7a;
+  --bg: #020202;
+  --panel: rgba(10, 10, 10, 0.98);
+  --ink: #f3f4f6;
+  --muted: #8b8b8b;
+}
+
+.theme-rainbow {
+  --c1: #22d3ee;
+  --c2: #f472b6;
+  --bg: #0b1220;
+  --panel: rgba(17, 24, 39, 0.82);
+  --ink: #ffffff;
+  --muted: #94a3b8;
+}
+
+/* =========================
+   THEME BACKGROUNDS
+   ========================= */
+
+.theme-bg-retrowave {
+  background:
+    radial-gradient(circle at 50% 20%, rgba(255, 0, 128, 0.18), transparent 30%),
+    radial-gradient(circle at 80% 10%, rgba(34, 211, 238, 0.12), transparent 30%),
+    linear-gradient(180deg, #07030d 0%, #12081c 40%, #090412 100%);
+}
+
+.theme-bg-adventurer {
+  background:
+    linear-gradient(180deg, rgba(15, 21, 16, 0.6) 0%, rgba(13, 17, 14, 0.72) 100%);
+}
+
+.theme-bg-floral {
+  background:
+    radial-gradient(circle at 25% 20%, rgba(249, 168, 212, 0.12), transparent 30%),
+    radial-gradient(circle at 75% 25%, rgba(134, 239, 172, 0.08), transparent 25%),
+    linear-gradient(
+      180deg,
+      rgba(18, 13, 20, 0.58) 0%,
+      rgba(27, 20, 32, 0.72) 45%,
+      rgba(19, 14, 21, 0.8) 100%
+    );
+}
+
+.theme-bg-premium {
+  background: linear-gradient(180deg, #020202 0%, #050505 45%, #020202 100%);
+}
+
+.theme-bg-rainbow {
+  background:
+    radial-gradient(circle at 10% 10%, rgba(34, 211, 238, 0.16), transparent 30%),
+    radial-gradient(circle at 80% 15%, rgba(244, 114, 182, 0.14), transparent 30%),
+    radial-gradient(circle at 50% 70%, rgba(167, 139, 250, 0.14), transparent 35%),
+    linear-gradient(180deg, #090d19 0%, #0b1220 50%, #0a0f1a 100%);
+}
+
+.theme-bg-media {
+  transform: scale(1.02);
+  transform-origin: center center;
+}
+
+.theme-media-layer {
+  position: absolute;
+  inset: 0;
+}

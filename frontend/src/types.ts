@@ -1,8 +1,16 @@
-export type Command = "pause" | "resume" | "skip" | "skip_group" | "shuffle" | "repeat" | "seek" | "seek_abs";
+export type Command =
+  | "pause"
+  | "resume"
+  | "skip"
+  | "skip_group"
+  | "shuffle"
+  | "repeat"
+  | "seek"
+  | "seek_abs";
 
 export type Control = {
   paused?: boolean;
-  volume?: number;     // restera toujours 100 côté serveur
+  volume?: number;
   skipSeq?: number;
   repeat?: boolean;
 };
@@ -12,10 +20,10 @@ export type Now = {
   title?: string;
   thumb?: string;
   addedBy?: string;
-  startedAt?: number | null;   // ms epoch quand “playing” (null si pause)
+  startedAt?: number | null;
   group?: string;
-  durationSec?: number;        // NEW
-  positionOffsetSec?: number;  // NEW: base pour calculer la position actuelle
+  durationSec?: number;
+  positionOffsetSec?: number;
   isBuffering: boolean;
 };
 
@@ -28,11 +36,17 @@ export type QueueItem = {
   addedBy?: string;
   status: "queued" | "playing" | "done" | "error";
   createdAt?: number;
+  durationSec?: number;
 };
 
 export type QueueResponse = {
   ok: boolean;
   now: Now | null;
   queue: QueueItem[];
+  history?: QueueItem[];
   control: Control | null;
+  stats?: {
+    totalQueued?: number;
+    remainingTimeSec?: number;
+  };
 };

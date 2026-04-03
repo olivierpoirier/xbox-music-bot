@@ -7,6 +7,7 @@ import {
   RotateCcw,
   RotateCw,
   Repeat,
+  Shuffle,
   X,
   ChevronUp,
   Loader2,
@@ -23,6 +24,7 @@ interface Props {
   now: Now | null;
   paused: boolean;
   repeat: boolean;
+  randomMode: boolean;
   busy: string | null;
   sendCommand: (cmd: Command, arg?: number) => void;
   rainbow?: boolean;
@@ -43,6 +45,7 @@ export default function PlayerBar({
   now,
   paused,
   repeat,
+  randomMode,
   busy,
   sendCommand,
   rainbow = false,
@@ -96,7 +99,8 @@ export default function PlayerBar({
   const hasRealTitle =
     now?.title &&
     now.title !== "Analyse du signal..." &&
-    now.title !== "Initialisation du flux...";
+    now.title !== "Initialisation du flux..." &&
+    now.title !== "Envoi au serveur...";
 
   const displayTitle = hasRealTitle
     ? now!.title
@@ -166,12 +170,17 @@ export default function PlayerBar({
                   />
                 ) : (
                   <div className="w-full h-full bg-white/5 flex items-center justify-center">
-                    <Music4 className={`opacity-30 ${rainbow ? "rainbow-cycle" : ""}`} size={16} />
+                    <Music4
+                      className={`opacity-30 ${rainbow ? "rainbow-cycle" : ""}`}
+                      size={16}
+                    />
                   </div>
                 )}
 
                 <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                  <ChevronUp className={`text-white w-6 h-6 ${rainbow ? "rainbow-cycle" : ""}`} />
+                  <ChevronUp
+                    className={`text-white w-6 h-6 ${rainbow ? "rainbow-cycle" : ""}`}
+                  />
                 </div>
               </button>
 
@@ -243,17 +252,21 @@ export default function PlayerBar({
                   />
                 )}
 
-                <div className={`absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.06),transparent_40%)] ${
-                  rainbow ? "rainbow-cycle" : ""
-                }`} />
+                <div
+                  className={`absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.06),transparent_40%)] ${
+                    rainbow ? "rainbow-cycle" : ""
+                  }`}
+                />
 
                 <div className="relative z-10 h-full overflow-y-auto custom-scroll">
                   <div className="min-h-full max-w-5xl mx-auto px-4 md:px-8 py-6 md:py-8 flex flex-col">
                     <div className="flex items-center justify-between mb-6">
                       <div className="flex items-center gap-3">
-                        <div className={`w-11 h-11 rounded-2xl border border-white/10 bg-white/5 flex items-center justify-center ${
-                          rainbow ? "rainbow-cycle" : ""
-                        }`}>
+                        <div
+                          className={`w-11 h-11 rounded-2xl border border-white/10 bg-white/5 flex items-center justify-center ${
+                            rainbow ? "rainbow-cycle" : ""
+                          }`}
+                        >
                           <Disc3 className="w-5 h-5 text-[var(--c1)]" />
                         </div>
                         <div className={rainbow ? "rainbow-cycle" : ""}>
@@ -279,9 +292,11 @@ export default function PlayerBar({
 
                     <div className="grid grid-cols-1 lg:grid-cols-[380px,1fr] gap-8 items-center flex-1">
                       <div className="flex flex-col items-center">
-                        <div className={`relative w-full max-w-[380px] aspect-square rounded-[2rem] p-2 border border-white/10 bg-white/5 shadow-2xl ${
-                          rainbow ? "rainbow-cycle" : ""
-                        }`}>
+                        <div
+                          className={`relative w-full max-w-[380px] aspect-square rounded-[2rem] p-2 border border-white/10 bg-white/5 shadow-2xl ${
+                            rainbow ? "rainbow-cycle" : ""
+                          }`}
+                        >
                           {now.thumb ? (
                             <img
                               src={now.thumb}
@@ -294,16 +309,17 @@ export default function PlayerBar({
                             />
                           ) : (
                             <div className="w-full h-full rounded-[1.5rem] bg-white/5 flex items-center justify-center">
-                              <Music4 className={`w-14 h-14 opacity-20 ${rainbow ? "rainbow-cycle" : ""}`} />
+                              <Music4
+                                className={`w-14 h-14 opacity-20 ${rainbow ? "rainbow-cycle" : ""}`}
+                              />
                             </div>
                           )}
                         </div>
 
-                        <div className={`w-full max-w-[380px] h-16 mt-5 ${rainbow ? "rainbow-cycle" : ""}`}>
-                          <SpectrumBars
-                            playing={!paused && !isBuffering}
-                            bars={30}
-                          />
+                        <div
+                          className={`w-full max-w-[380px] h-16 mt-5 ${rainbow ? "rainbow-cycle" : ""}`}
+                        >
+                          <SpectrumBars playing={!paused && !isBuffering} bars={30} />
                         </div>
                       </div>
 
@@ -319,9 +335,11 @@ export default function PlayerBar({
 
                         <p className="mt-3 text-white/55">{subtitle}</p>
 
-                        <div className={`mt-8 rounded-[1.5rem] border border-white/10 bg-white/5 p-4 md:p-5 ${
-                          rainbow ? "rainbow-cycle" : ""
-                        }`}>
+                        <div
+                          className={`mt-8 rounded-[1.5rem] border border-white/10 bg-white/5 p-4 md:p-5 ${
+                            rainbow ? "rainbow-cycle" : ""
+                          }`}
+                        >
                           <div className="flex justify-between text-xs tracking-widest text-white/60 mb-3">
                             <span>{formatTime(currentPos)}</span>
                             <span>{hasDur ? formatTime(dur) : "--:--"}</span>
@@ -369,7 +387,7 @@ export default function PlayerBar({
                             </button>
 
                             <button
-                              onClick={() => sendCommand("skip_back" as Command)}
+                              onClick={() => sendCommand("previous")}
                               className={`h-14 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 text-white/75 transition flex items-center justify-center ${
                                 rainbow ? "rainbow-cycle" : ""
                               }`}
@@ -415,7 +433,7 @@ export default function PlayerBar({
                             </button>
                           </div>
 
-                          <div className="mt-4 flex items-center justify-between gap-3">
+                          <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
                             <div className="text-sm text-white/45">
                               {isBuffering
                                 ? "Chargement du flux…"
@@ -424,25 +442,44 @@ export default function PlayerBar({
                                 : "Lecture en cours"}
                             </div>
 
-                            <button
-                              onClick={() => sendCommand("repeat", repeat ? 0 : 1)}
-                              className={`px-4 py-2 rounded-xl border transition ${
-                                repeat
-                                  ? "border-[var(--c1)] bg-[color-mix(in_oklab,var(--c1)_15%,transparent)] text-[var(--c1)]"
-                                  : "border-white/10 bg-white/5 text-white/50 hover:text-white"
-                              } ${rainbow ? "rainbow-cycle" : ""}`}
-                              type="button"
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                <Repeat size={16} />
-                                Repeat
-                              </span>
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() =>
+                                  sendCommand("random_mode", randomMode ? 0 : 1)
+                                }
+                                className={`px-4 py-2 rounded-xl border transition ${
+                                  randomMode
+                                    ? "border-[var(--c1)] bg-[color-mix(in_oklab,var(--c1)_15%,transparent)] text-[var(--c1)]"
+                                    : "border-white/10 bg-white/5 text-white/50 hover:text-white"
+                                } ${rainbow ? "rainbow-cycle" : ""}`}
+                                type="button"
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  <Shuffle size={16} />
+                                  Aléatoire
+                                </span>
+                              </button>
+
+                              <button
+                                onClick={() => sendCommand("repeat", repeat ? 0 : 1)}
+                                className={`px-4 py-2 rounded-xl border transition ${
+                                  repeat
+                                    ? "border-[var(--c1)] bg-[color-mix(in_oklab,var(--c1)_15%,transparent)] text-[var(--c1)]"
+                                    : "border-white/10 bg-white/5 text-white/50 hover:text-white"
+                                } ${rainbow ? "rainbow-cycle" : ""}`}
+                                type="button"
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  <Repeat size={16} />
+                                  Repeat
+                                </span>
+                              </button>
+                            </div>
                           </div>
                         </div>
 
                         <div className="mt-6 text-xs text-white/35">
-                          Astuce : tu peux fermer ce panneau avec le bouton en haut à droite.
+                          Astuce : le bouton précédent relance la piste actuelle si tu as déjà avancé de quelques secondes, sinon il repart dans l’historique.
                         </div>
                       </div>
                     </div>

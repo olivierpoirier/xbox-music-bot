@@ -15,7 +15,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Trash2, GripVertical, ListMusic } from "lucide-react";
+import { Trash2, GripVertical, ListMusic, Shuffle } from "lucide-react";
 
 import type { QueueItem } from "../types";
 import type { ThemeName } from "../lib/themes";
@@ -25,8 +25,11 @@ import ThemedPanel from "./ui/ThemedPanel";
 interface Props {
   queue: QueueItem[];
   busy: string | null;
+  randomMode: boolean;
   onSkipGroup: () => void;
   onClear: () => void;
+  onShuffle: () => void;
+  onToggleRandom: () => void;
   onReorder: (ids: string[]) => void;
   onRemove: (id: string) => void;
   onDropHistoryItem?: (id: string, targetIndex?: number) => void;
@@ -70,6 +73,7 @@ function SortableQueueItem({
 
   const displayName = item.title || item.url;
   const isAdventurer = !rainbow && theme === "adventurer";
+  const isPending = item.status === "pending";
 
   return (
     <ThemedPanel
@@ -78,7 +82,8 @@ function SortableQueueItem({
       soft
       className={cn(
         "group p-2 flex gap-3 items-center touch-manipulation relative w-full overflow-hidden",
-        isAdventurer ? "rounded-[22px]" : ""
+        isAdventurer ? "rounded-[22px]" : "",
+        isPending && "opacity-70"
       )}
     >
       <div
@@ -106,7 +111,7 @@ function SortableQueueItem({
           ref={setActivatorNodeRef}
           {...attributes}
           {...listeners}
-          disabled={disabled}
+          disabled={disabled || isPending}
           onPointerDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
           className={cn(
@@ -119,7 +124,7 @@ function SortableQueueItem({
           <GripVertical className="w-5 h-5" />
         </button>
 
-        {item.thumb && (
+        {item.thumb ? (
           <img
             src={item.thumb}
             alt=""
@@ -130,10 +135,19 @@ function SortableQueueItem({
                 : "rounded border-slate-700",
               rainbow && "rainbow-cycle"
             )}
-            onError={(e) => {
-              e.currentTarget.src = "/fallback-cover.png";
-            }}
           />
+        ) : (
+          <div
+            className={cn(
+              "w-10 h-10 shrink-0 border flex items-center justify-center",
+              isAdventurer
+                ? "rounded-xl border-[#d5c5a1]/20 bg-black/20"
+                : "rounded border-slate-700 bg-black/20",
+              rainbow && "rainbow-cycle"
+            )}
+          >
+            <ListMusic className="w-4 h-4 opacity-40" />
+          </div>
         )}
 
         <div className="flex-1 min-w-0 overflow-hidden">
@@ -145,7 +159,8 @@ function SortableQueueItem({
               onPointerDown={(e) => e.stopPropagation()}
               className={cn(
                 "text-white hover:text-blue-400 font-medium text-sm block",
-                rainbow && "rainbow-cycle"
+                rainbow && "rainbow-cycle",
+                isPending && "pointer-events-none"
               )}
             >
               <span className="marquee-content will-change-transform">
@@ -164,12 +179,12 @@ function SortableQueueItem({
               rainbow && "rainbow-cycle"
             )}
           >
-            {item.addedBy || "anonyme"} · {item.status}
+            {item.addedBy || "anonyme"} · {isPending ? "envoi..." : item.status}
           </div>
         </div>
 
         <button
-          disabled={disabled}
+          disabled={disabled || isPending}
           onClick={() => onRemove(item.id)}
           className={cn(
             "p-2 shrink-0 rounded-lg transition themed-danger-button",
@@ -188,8 +203,11 @@ function SortableQueueItem({
 export default function QueueList({
   queue,
   busy,
+  randomMode,
   onSkipGroup,
   onClear,
+  onShuffle,
+  onToggleRandom,
   onReorder,
   onRemove,
   onDropHistoryItem,
@@ -259,7 +277,36 @@ export default function QueueList({
             File d&apos;attente
           </h2>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap justify-end">
+            <button
+              onClick={onShuffle}
+              className={cn(
+                "text-xs px-3 py-2 rounded-lg themed-secondary-button inline-flex items-center gap-2",
+                rainbow && "rainbow-cycle"
+              )}
+              title="Mélanger la file"
+              type="button"
+            >
+              <Shuffle className="w-3.5 h-3.5" />
+              Shuffle
+            </button>
+
+            <button
+              onClick={onToggleRandom}
+              className={cn(
+                "text-xs px-3 py-2 rounded-lg border transition inline-flex items-center gap-2",
+                randomMode
+                  ? "border-[var(--c1)] text-[var(--c1)] bg-[color-mix(in_oklab,var(--c1)_10%,transparent)]"
+                  : "border-white/10 bg-white/5 text-white/70 hover:text-white",
+                rainbow && "rainbow-cycle"
+              )}
+              title="Mode lecture aléatoire"
+              type="button"
+            >
+              <Shuffle className="w-3.5 h-3.5" />
+              Aléatoire
+            </button>
+
             <button
               onClick={onSkipGroup}
               className={cn(

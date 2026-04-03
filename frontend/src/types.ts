@@ -3,8 +3,10 @@ export type Command =
   | "resume"
   | "skip"
   | "skip_group"
-  | "shuffle"
+  | "shuffle_queue"
+  | "previous"
   | "repeat"
+  | "random_mode"
   | "seek"
   | "seek_abs";
 
@@ -13,30 +15,33 @@ export type Control = {
   volume?: number;
   skipSeq?: number;
   repeat?: boolean;
+  randomMode?: boolean;
 };
 
 export type Now = {
   url?: string;
   title?: string;
-  thumb?: string;
+  thumb?: string | null;
   addedBy?: string;
   startedAt?: number | null;
   group?: string;
-  durationSec?: number;
+  durationSec?: number | null;
   positionOffsetSec?: number;
   isBuffering: boolean;
+  clientRequestId?: string;
 };
 
 export type QueueItem = {
   id: string;
   url: string;
   title?: string;
-  thumb?: string;
+  thumb?: string | null;
   group?: string;
   addedBy?: string;
-  status: "queued" | "playing" | "done" | "error";
-  createdAt?: number;
+  status: "queued" | "playing" | "done" | "error" | "pending";
+  createdAt: number;
   durationSec?: number;
+  clientRequestId?: string;
 };
 
 export type QueueResponse = {

@@ -31,8 +31,10 @@ type Command =
   | "resume"
   | "skip"
   | "skip_group"
-  | "shuffle"
+  | "shuffle_queue"
+  | "previous"
   | "repeat"
+  | "random_mode"
   | "seek"
   | "seek_abs";
 
@@ -77,6 +79,7 @@ export default function App() {
   const [themeTransitioning, setThemeTransitioning] = useState(false);
   const transitionTimeoutRef = useRef<number | null>(null);
 
+  
   const {
     state,
     toast,
@@ -249,6 +252,8 @@ export default function App() {
     repeat: false,
   };
 
+  const randomMode = Boolean(control.randomMode);
+
   const paused = Boolean(control.paused);
   const repeat = Boolean(control.repeat);
   const now: Now | null = state.now ?? null;
@@ -402,19 +407,22 @@ export default function App() {
                 className="min-w-0"
                 rainbow={rainbow}
               >
-                <QueueList
-                  queue={queue}
-                  busy={busy}
-                  rainbow={rainbow}
-                  theme={theme}
-                  onSkipGroup={() => sendCommand("skip_group")}
-                  onClear={clearWithPass}
-                  onReorder={reorderQueue}
-                  onRemove={removeQueueItem}
-                  onDropHistoryItem={(id, targetIndex) =>
-                    requeueHistoryItem(id, targetIndex)
-                  }
-                />
+              <QueueList
+                queue={queue}
+                busy={busy}
+                randomMode={randomMode}
+                rainbow={rainbow}
+                theme={theme}
+                onSkipGroup={() => sendCommand("skip_group")}
+                onClear={clearWithPass}
+                onShuffle={() => sendCommand("shuffle_queue")}
+                onToggleRandom={() => sendCommand("random_mode", randomMode ? 0 : 1)}
+                onReorder={reorderQueue}
+                onRemove={removeQueueItem}
+                onDropHistoryItem={(id, targetIndex) =>
+                  requeueHistoryItem(id, targetIndex)
+                }
+              />
               </SectionCard>
             </div>
           </div>
@@ -434,6 +442,7 @@ export default function App() {
           now={now}
           paused={paused}
           repeat={repeat}
+          randomMode={randomMode}
           busy={busy}
           rainbow={rainbow}
           theme={theme}

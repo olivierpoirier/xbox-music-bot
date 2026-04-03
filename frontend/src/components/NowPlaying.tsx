@@ -51,7 +51,8 @@ export default function NowPlaying({
   const hasRealTitle =
     now?.title &&
     now.title !== "Analyse du signal..." &&
-    now.title !== "Initialisation du flux...";
+    now.title !== "Initialisation du flux..." &&
+    now.title !== "Envoi au serveur...";
 
   const calculatePos = () => {
     if (!now) return 0;
@@ -66,7 +67,6 @@ export default function NowPlaying({
   const dur = hasDur ? now!.durationSec! : 0;
   const currentPos = calculatePos();
   const pos = hasDur ? Math.min(dur, Math.max(0, currentPos)) : Math.max(0, currentPos);
-  const remaining = hasDur ? Math.max(0, dur - pos) : 0;
 
   const ui = getThemeUi({ theme, rainbow });
 
@@ -189,18 +189,6 @@ export default function NowPlaying({
                     ? `${formatTime(pos)} / ${formatTime(dur)}`
                     : "LIVE / ∞"}
                 </div>
-
-                {hasDur && (
-                  <div
-                    className={`text-xs opacity-50 uppercase tracking-tighter mt-1 transition-opacity ${
-                      isBuffering ? "opacity-0" : "opacity-50"
-                    } ${isAdventurer ? "font-medium" : "font-mono"} ${
-                      rainbow ? "rainbow-cycle" : ""
-                    }`}
-                  >
-                    RESTE: {formatTime(remaining)}
-                  </div>
-                )}
 
                 <div className="mt-4 flex flex-wrap justify-center md:justify-start items-center gap-2">
                   {paused && (

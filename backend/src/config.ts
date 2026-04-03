@@ -1,8 +1,32 @@
 import path from "path";
 import fs from "fs";
 
+const PLATFORM = process.platform;
+const IS_WINDOWS = PLATFORM === "win32";
+const IS_LINUX = PLATFORM === "linux";
+
+function readEnv(key: string): string {
+  return (process.env[key] || "").trim();
+}
+
+function envOrDefault(key: string, fallback: string): string {
+  const value = readEnv(key);
+  return value || fallback;
+}
+
+function envEnabled(key: string, defaultValue = true): boolean {
+  const value = readEnv(key).toLowerCase();
+
+  if (!value) return defaultValue;
+
+  return !["0", "false", "no", "off"].includes(value);
+}
+
 export const APP_CONFIG = {
-  PORT: parseInt(process.env.PORT || "4000", 10),
+  PORT: 4000,
+  platform: PLATFORM,
+  isWindows: IS_WINDOWS,
+  isLinux: IS_LINUX,
 };
 
 const COOKIES_PATH = path.resolve(process.cwd(), "cookies.txt");
@@ -14,14 +38,36 @@ if (HAS_COOKIES) {
   console.warn(`⚠️ Fichier cookies introuvable à : ${COOKIES_PATH}`);
 }
 
-const YTDLP_JS_RUNTIME = (process.env.YTDLP_JS_RUNTIME || "").trim();
+const YTDLP_JS_RUNTIME = readEnv("YTDLP_JS_RUNTIME");
+
+export const AUDIO_CONFIG = {
+  windowsVoicemeeterPath: envOrDefault(
+    "VOICEMEETER_PATH",
+    "C:\\Program Files (x86)\\VB\\Voicemeeter\\voicemeeterpro.exe"
+  ),
+
+  windowsVoicemeeterExeName: envOrDefault(
+    "VOICEMEETER_EXE_NAME",
+    "voicemeeterpro.exe"
+  ),
+
+  // Device Windows par défaut pour mpv -> VoiceMeeter
+  windowsMpvAudioDevice: envOrDefault(
+    "WINDOWS_MPV_AUDIO_DEVICE",
+    "wasapi/{422c5f03-d063-4b65-b529-c54272b9bac9}"
+  ),
+
+  // Linux : création automatique d'un sink/source virtuel
+  linuxEnableVirtualSink: envEnabled("LINUX_ENABLE_VIRTUAL_SINK", true),
+  linuxVirtualSinkName: envOrDefault("LINUX_VIRTUAL_SINK_NAME", "xmbot_sink"),
+  linuxVirtualSinkDescription: envOrDefault(
+    "LINUX_VIRTUAL_SINK_DESCRIPTION",
+    "XM-Bot-Virtual-Sink"
+  ),
+};
 
 export const MPV_CONFIG = {
-  bin: (process.env.MPV_BIN || "mpv").trim(),
-  audioDevice: (
-    process.env.MPV_AUDIO_DEVICE ||
-    "wasapi/{422c5f03-d063-4b65-b529-c54272b9bac9}"
-  ).trim(),
+  bin: envOrDefault("MPV_BIN", "mpv"),
 
   baseArgs: [
     "--video=no",
@@ -40,8 +86,9 @@ export const MPV_CONFIG = {
     "--gapless-audio=yes",
     "--audio-pitch-correction=yes",
 
-    // Fluidité / stabilité
+    // Robustesse
     "--audio-buffer=5.0",
+    "--audio-fallback-to-null=yes",
     "--cache=yes",
     "--demuxer-max-bytes=512MiB",
     "--demuxer-readahead-secs=20",
@@ -60,7 +107,7 @@ export const MPV_CONFIG = {
 };
 
 export const YTDLP_CONFIG = {
-  bin: (process.env.YTDLP_BIN || "yt-dlp.exe").trim(),
+  bin: envOrDefault("YTDLP_BIN", IS_WINDOWS ? "yt-dlp.exe" : "yt-dlp"),
 
   baseArgs: [
     "--force-ipv4",

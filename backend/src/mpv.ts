@@ -4,9 +4,11 @@ import net from "net";
 import crypto from "crypto";
 import { EventEmitter } from "events";
 import { MPV_CONFIG } from "./config";
+import { getRuntimeAudioRouting } from "./utils";
 import { MpvEvent, MpvHandle } from "./types";
 
-const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /* ------------------- UTILS ------------------- */
 
@@ -25,10 +27,14 @@ function findPlayerBinary(): string {
   if (ok("mpv")) return "mpv";
   if (ok("mpvnet")) return "mpvnet";
 
-  throw new Error("❌ Exécutable MPV introuvable. Vérifiez votre installation ou votre fichier .env");
+  throw new Error(
+    "❌ Exécutable MPV introuvable. Vérifiez votre installation ou votre fichier .env"
+  );
 }
 
 function buildAudioArgs(ipcPath: string): string[] {
+  const routing = getRuntimeAudioRouting();
+
   const args: string[] = [
     ...MPV_CONFIG.baseArgs,
     `--input-ipc-server=${ipcPath}`,
@@ -40,12 +46,8 @@ function buildAudioArgs(ipcPath: string): string[] {
     args.push(`--af=${MPV_CONFIG.audioFilters}`);
   }
 
-  if (process.platform === "win32") {
-    args.push("--ao=wasapi");
-  }
-
-  if (MPV_CONFIG.audioDevice && MPV_CONFIG.audioDevice.trim() !== "") {
-    args.push(`--audio-device=${MPV_CONFIG.audioDevice}`);
+  if (routing.audioDevice && routing.audioDevice.trim() !== "") {
+    args.push(`--audio-device=${routing.audioDevice}`);
   }
 
   return args;
@@ -118,7 +120,9 @@ export class MpvInstance extends EventEmitter {
     }
   }
 
-  public waitForPlaybackStart(timeoutMs = MPV_CONFIG.globalStartTimeoutMs): Promise<void> {
+  public waitForPlaybackStart(
+    timeoutMs = MPV_CONFIG.globalStartTimeoutMs
+  ): Promise<void> {
     if (this.started) return Promise.resolve();
 
     return new Promise<void>((resolve, reject) => {
@@ -210,7 +214,10 @@ export class MpvInstance extends EventEmitter {
         this.startResolve?.();
       }
       eventToEmit = { type: "playback-restart" };
-    } else if (obj?.event === "property-change" && typeof obj.name === "string") {
+    } else if (
+      obj?.event === "property-change" &&
+      typeof obj.name === "string"
+    ) {
       eventToEmit = {
         type: "property-change",
         name: obj.name,
@@ -233,7 +240,9 @@ export class MpvInstance extends EventEmitter {
     }
   }
 
-  private async connectIpc(timeoutMs = MPV_CONFIG.ipcConnectTimeoutMs): Promise<net.Socket> {
+  private async connectIpc(
+    timeoutMs = MPV_CONFIG.ipcConnectTimeoutMs
+  ): Promise<net.Socket> {
     const start = Date.now();
     let delay = 100;
 
@@ -332,7 +341,11 @@ export async function startMpv(url: string): Promise<MpvHandle> {
 
 /* ------------------- HELPERS ------------------- */
 
-async function safeSend(h: MpvHandle, cmd: Record<string, any>, context: string) {
+async function safeSend(
+  h: MpvHandle,
+  cmd: Record<string, any>,
+  context: string
+) {
   if (!h.sock || h.sock.destroyed || !h.sock.writable) return;
 
   try {

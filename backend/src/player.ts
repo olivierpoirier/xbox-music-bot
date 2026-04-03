@@ -1,6 +1,21 @@
 import play from "play-dl";
-import { state, playing, setPlaying, QueueItem, MpvHandle, MpvEvent } from "./types";
-import { startMpv, mpvPause, mpvLoadFile, mpvStop, mpvSetLoopFile } from "./mpv";
+import {
+  state,
+  playing,
+  setPlaying,
+  QueueItem,
+  MpvHandle,
+  MpvEvent,
+  nextId,
+} from "./types";
+import {
+  startMpv,
+  mpvPause,
+  mpvLoadFile,
+  mpvStop,
+  mpvSetLoopFile,
+  mpvSeekAbsolute,
+} from "./mpv";
 import { getDirectPlayableUrl, normalizeUrl, resolvePlayable } from "./ytdlp";
 import { MPV_CONFIG } from "./config";
 
@@ -12,6 +27,28 @@ let currentListener: ((ev: MpvEvent) => void) | null = null;
 
 let preloaded: { itemId: string; url: string } | null = null;
 let preloadingForId: string | null = null;
+
+function computeCurrentPosition(): number {
+  if (!state.now) return 0;
+
+  if (state.control.paused || state.now.isBuffering || !state.now.startedAt) {
+    return state.now.positionOffsetSec || 0;
+  }
+
+  return Math.max(0, (Date.now() - state.now.startedAt) / 1000);
+}
+
+function pushToHistory(item: QueueItem): void {
+  const snapshot: QueueItem = {
+    ...item,
+    status: "done",
+  };
+
+  state.history = [
+    snapshot,
+    ...state.history.filter((h) => h.id !== item.id),
+  ].slice(0, 200);
+}
 
 async function preloadNextTrack(item: QueueItem): Promise<void> {
   if (!item) return;
@@ -58,6 +95,12 @@ function clearPreloadForItem(itemId: string): void {
 function resetNowState(): void {
   state.now = null;
   setPlaying(null);
+}
+
+function insertQueuedItemAtFront(item: QueueItem): void {
+  const queued = state.queue.filter((q) => q.status === "queued");
+  const others = state.queue.filter((q) => q.status !== "queued");
+  state.queue = [...others, item, ...queued];
 }
 
 /* ------------------- MPV ------------------- */
@@ -131,7 +174,7 @@ async function attachListener(
         const drift = Math.abs(theoreticalPos - ev.data);
 
         if (drift > 1 || !now.startedAt) {
-          now.startedAt = Date.now() - (ev.data * 1000);
+          now.startedAt = Date.now() - ev.data * 1000;
         }
       }
 
@@ -179,6 +222,7 @@ async function tryPlayWith(
       isBuffering: true,
       positionOffsetSec: 0,
       startedAt: null,
+      clientRequestId: item.clientRequestId,
     };
 
     onStateChange();
@@ -268,6 +312,7 @@ function handleEndOfTrack(item: QueueItem, onStateChange: () => void): void {
 
   item.status = "done";
   clearPreloadForItem(item.id);
+  pushToHistory(item);
   resetNowState();
 
   onStateChange();
@@ -290,6 +335,17 @@ function failItemAndContinue(item: QueueItem, onStateChange: () => void): void {
 
 /* ------------------- QUEUE LOOP ------------------- */
 
+function pickNextQueuedItem(): QueueItem | null {
+  const queued = state.queue.filter((q) => q.status === "queued");
+  if (!queued.length) return null;
+
+  if (state.control.randomMode) {
+    return queued[Math.floor(Math.random() * queued.length)] ?? null;
+  }
+
+  return queued[0] ?? null;
+}
+
 export async function ensurePlayerLoop(onStateChange: () => void): Promise<void> {
   if (isLooping) return;
   if (playing && playing.item.status === "playing") return;
@@ -297,7 +353,7 @@ export async function ensurePlayerLoop(onStateChange: () => void): Promise<void>
   isLooping = true;
 
   try {
-    const nextItem = state.queue.find((q) => q.status === "queued");
+    const nextItem = pickNextQueuedItem();
 
     if (!nextItem) {
       resetNowState();
@@ -305,9 +361,9 @@ export async function ensurePlayerLoop(onStateChange: () => void): Promise<void>
       return;
     }
 
-    const followUpItem = state.queue.find(
-      (q) => q.status === "queued" && q.id !== nextItem.id
-    );
+    const queued = state.queue.filter((q) => q.status === "queued" && q.id !== nextItem.id);
+    const followUpItem =
+      queued[Math.floor(Math.random() * Math.max(1, queued.length))] ?? null;
 
     if (followUpItem) {
       void preloadNextTrack(followUpItem);
@@ -359,6 +415,7 @@ export async function skip(onStateChange: () => void): Promise<void> {
 
   currentItem.status = "done";
   clearPreloadForItem(currentItem.id);
+  pushToHistory(currentItem);
   resetNowState();
 
   onStateChange();
@@ -368,6 +425,94 @@ export async function skip(onStateChange: () => void): Promise<void> {
   } catch {}
 
   void ensurePlayerLoop(onStateChange);
+}
+
+export async function seekRelative(
+  deltaSec: number,
+  onStateChange: () => void
+): Promise<void> {
+  const h = playing?.handle;
+  if (!h || !state.now) return;
+
+  const current = computeCurrentPosition();
+  const target = Math.max(0, current + deltaSec);
+
+  state.now.positionOffsetSec = target;
+  state.now.startedAt = null;
+  state.now.isBuffering = true;
+
+  onStateChange();
+  await mpvSeekAbsolute(h, target);
+}
+
+export async function playPrevious(onStateChange: () => void): Promise<void> {
+  if (state.now && computeCurrentPosition() > 5 && playing?.handle) {
+    state.now.positionOffsetSec = 0;
+    state.now.startedAt = state.control.paused ? null : Date.now();
+    state.now.isBuffering = true;
+
+    onStateChange();
+    await mpvSeekAbsolute(playing.handle, 0);
+    return;
+  }
+
+  const previous = state.history[0];
+  if (!previous) return;
+
+  state.history = state.history.slice(1);
+
+  const previousClone: QueueItem = {
+    ...previous,
+    id: String(nextId.current++),
+    createdAt: Date.now(),
+    status: "queued",
+  };
+
+  const currentItem = playing?.item ?? null;
+  const doneOrError = state.queue.filter(
+    (q) => q.status !== "queued" && q.status !== "playing"
+  );
+  const queued = state.queue.filter(
+    (q) => q.status === "queued" && q.id !== currentItem?.id
+  );
+
+  if (currentItem) {
+    currentItem.status = "queued";
+  }
+
+  state.queue = [
+    ...doneOrError,
+    previousClone,
+    ...(currentItem ? [currentItem] : []),
+    ...queued,
+  ];
+
+  resetNowState();
+  onStateChange();
+
+  try {
+    if (playing?.handle) {
+      await mpvStop(playing.handle);
+    }
+  } catch {}
+
+  void ensurePlayerLoop(onStateChange);
+}
+
+export async function skipGroup(onStateChange: () => void): Promise<void> {
+  const currentGroup = playing?.item?.group;
+  if (!currentGroup) {
+    await skip(onStateChange);
+    return;
+  }
+
+  for (const item of state.queue) {
+    if (item.status === "queued" && item.group === currentGroup) {
+      item.status = "done";
+    }
+  }
+
+  await skip(onStateChange);
 }
 
 export async function stopPlayer(onStateChange: () => void): Promise<void> {

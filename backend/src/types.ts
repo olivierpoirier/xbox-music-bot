@@ -1,4 +1,3 @@
-// src/types.ts
 import { ChildProcess } from "child_process";
 import net from "net";
 
@@ -31,6 +30,7 @@ export type Control = {
   paused: boolean;
   skipSeq: number;
   repeat: boolean;
+  randomMode: boolean;
 };
 
 export type Now = {
@@ -43,6 +43,7 @@ export type Now = {
   durationSec?: number | null;
   positionOffsetSec?: number;
   isBuffering: boolean;
+  clientRequestId?: string;
 };
 
 export type QueueItem = {
@@ -52,15 +53,17 @@ export type QueueItem = {
   thumb: string | null;
   group?: string;
   addedBy?: string;
-  status: "queued" | "playing" | "done" | "error";
+  status: "queued" | "playing" | "done" | "error" | "pending";
   createdAt: number;
   durationSec?: number;
+  clientRequestId?: string;
 };
 
 export interface GlobalState {
   control: Control;
   now: Now | null;
   queue: QueueItem[];
+  history: QueueItem[];
 }
 
 /* ------------------- STATE INSTANCE ------------------- */
@@ -70,9 +73,11 @@ export const state: GlobalState = {
     paused: false,
     skipSeq: 0,
     repeat: false,
+    randomMode: false,
   },
   now: null,
   queue: [],
+  history: [],
 };
 
 export let playing: { item: QueueItem; handle: MpvHandle } | null = null;

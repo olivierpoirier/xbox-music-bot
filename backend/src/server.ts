@@ -7,8 +7,17 @@ import { Server as IOServer } from "socket.io";
 import path from "node:path";
 import play from "play-dl";
 
+import { APP_CONFIG } from "./config";
 import { state, nextId, playing, QueueItem } from "./types";
-import { ensurePlayerLoop, ensureMpvRunning, skip, stopPlayer } from "./player";
+import {
+  ensurePlayerLoop,
+  ensureMpvRunning,
+  skip,
+  stopPlayer,
+  seekRelative,
+  playPrevious,
+  skipGroup,
+} from "./player";
 import {
   mpvPause,
   mpvSetLoopFile,
@@ -19,7 +28,10 @@ import {
   probeSingle,
   normalizeUrl,
 } from "./ytdlp";
-import { ensureVoicemeeterReady } from "./utils";
+import {
+  ensureAudioRoutingReady,
+  getRuntimeAudioRouting,
+} from "./utils";
 
 const app = express();
 const server = http.createServer(app);
@@ -31,7 +43,7 @@ const io = new IOServer(server, {
 
 /* --- VARIABLES DE CONTRÔLE DU CYCLE DE VIE --- */
 
-let isVoicemeeterMissing = false;
+let systemAudioWarning: string | null = null;
 let activeUsers = 0;
 let shutdownTimer: NodeJS.Timeout | null = null;
 const SHUTDOWN_DELAY = 60_000;
@@ -80,6 +92,17 @@ function isProbablyUrl(input: string): boolean {
   return /^https?:\/\//i.test(input);
 }
 
+function shuffleArray<T>(items: T[]): T[] {
+  const copy = [...items];
+
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+
+  return copy;
+}
+
 function broadcast(): void {
   const queued = state.queue.filter((q) => q.status === "queued");
   const totalDuration = queued.reduce(
@@ -90,7 +113,8 @@ function broadcast(): void {
   io.emit("state", {
     ok: true,
     now: state.now,
-    queue: queued.slice(0, 50),
+    queue: queued,
+    history: state.history.slice(0, 200),
     stats: {
       totalQueued: queued.length,
       remainingTimeSec: totalDuration,
@@ -150,9 +174,11 @@ async function resolveSearchTextToVideoUrl(query: string): Promise<{
   }
 }
 
-function pushQueueItem(item: Omit<QueueItem, "id" | "createdAt" | "status"> & {
-  status?: QueueItem["status"];
-}): QueueItem {
+function pushQueueItem(
+  item: Omit<QueueItem, "id" | "createdAt" | "status"> & {
+    status?: QueueItem["status"];
+  }
+): QueueItem {
   const newItem: QueueItem = {
     id: String(nextId.current++),
     createdAt: Date.now(),
@@ -163,6 +189,7 @@ function pushQueueItem(item: Omit<QueueItem, "id" | "createdAt" | "status"> & {
     group: item.group,
     addedBy: item.addedBy,
     durationSec: item.durationSec,
+    clientRequestId: item.clientRequestId,
   };
 
   state.queue.push(newItem);
@@ -210,11 +237,8 @@ io.on("connection", (socket) => {
     shutdownTimer = null;
   }
 
-  if (isVoicemeeterMissing) {
-    socket.emit(
-      "error_system",
-      "VoiceMeeter Banana n'est pas installé sur le serveur."
-    );
+  if (systemAudioWarning) {
+    socket.emit("error_system", systemAudioWarning);
   }
 
   broadcast();
@@ -229,104 +253,108 @@ io.on("connection", (socket) => {
     });
   }
 
-  /* --- ÉVÈNEMENTS DE LECTURE --- */
+  socket.on(
+    "play",
+    async (payload: { url?: string; addedBy?: string; clientRequestId?: string }) => {
+      try {
+        const raw = String(payload?.url || "").trim();
+        const addedBy = (payload.addedBy || "anon").slice(0, 32);
+        const clientRequestId =
+          String(payload?.clientRequestId || "").trim() || undefined;
 
-  socket.on("play", async (payload: { url?: string; addedBy?: string }) => {
-    try {
-      const raw = String(payload?.url || "").trim();
-      const addedBy = (payload.addedBy || "anon").slice(0, 32);
-
-      if (!raw) {
-        socket.emit("toast", "Entrée vide.");
-        return;
-      }
-
-      /* --- MODE RECHERCHE TEXTE --- */
-      if (!isProbablyUrl(raw)) {
-        socket.emit("toast", "Recherche YouTube en cours...");
-
-        const found = await resolveSearchTextToVideoUrl(raw);
-
-        if (!found) {
-          socket.emit("toast", "Aucun résultat trouvé.");
+        if (!raw) {
+          socket.emit("toast", "Entrée vide.");
           return;
         }
 
-        pushQueueItem({
-          url: found.url,
-          title: found.title || "Titre en attente...",
-          thumb: found.thumb ?? null,
-          durationSec: found.durationSec || 0,
+        if (!isProbablyUrl(raw)) {
+          socket.emit("toast", "Recherche YouTube en cours...");
+
+          const found = await resolveSearchTextToVideoUrl(raw);
+
+          if (!found) {
+            socket.emit("toast", "Aucun résultat trouvé.");
+            return;
+          }
+
+          pushQueueItem({
+            url: found.url,
+            title: found.title || "Titre en attente...",
+            thumb: found.thumb ?? null,
+            durationSec: found.durationSec || 0,
+            addedBy,
+            clientRequestId,
+          });
+
+          broadcast();
+          void ensurePlayerLoop(broadcast);
+          return;
+        }
+
+        const normalized = normalizeUrl(raw);
+
+        if (isYoutubeSearchUrl(normalized)) {
+          socket.emit(
+            "toast",
+            "Ce lien est une page de recherche YouTube, pas une vidéo."
+          );
+          return;
+        }
+
+        const spotify = isSpotifyUrl(normalized);
+        const playlist = isPlaylistUrl(normalized);
+
+        if (spotify || playlist) {
+          socket.emit("toast", "Analyse de la playlist...");
+
+          const items = await resolveUrlToPlayableItems(normalized);
+
+          if (!items.length) {
+            socket.emit("toast", "Aucun titre exploitable trouvé.");
+            return;
+          }
+
+          const group = `pl_${Date.now()}`;
+
+          items.forEach((it, index) => {
+            pushQueueItem({
+              url: it.url,
+              title: it.title || "Titre en attente...",
+              thumb: it.thumb ?? null,
+              durationSec: it.durationSec || 0,
+              addedBy,
+              group,
+              clientRequestId: index === 0 ? clientRequestId : undefined,
+            });
+          });
+
+          socket.emit("toast", `${items.length} titres ajoutés !`);
+          broadcast();
+          void ensurePlayerLoop(broadcast);
+          return;
+        }
+
+        const queued = pushQueueItem({
+          url: normalized,
+          title: "Analyse du signal...",
+          thumb: null,
           addedBy,
+          clientRequestId,
         });
 
         broadcast();
-        void ensurePlayerLoop(broadcast);
-        return;
-      }
 
-      /* --- MODE URL --- */
-      const normalized = normalizeUrl(raw);
-
-      if (isYoutubeSearchUrl(normalized)) {
-        socket.emit(
-          "toast",
-          "Ce lien est une page de recherche YouTube, pas une vidéo."
-        );
-        return;
-      }
-
-      const spotify = isSpotifyUrl(normalized);
-      const playlist = isPlaylistUrl(normalized);
-
-      if (spotify || playlist) {
-        socket.emit("toast", "Analyse de la playlist...");
-
-        const items = await resolveUrlToPlayableItems(normalized);
-
-        if (!items.length) {
-          socket.emit("toast", "Aucun titre exploitable trouvé.");
-          return;
+        if (!isYoutubeSearchUrl(normalized)) {
+          void enrichQueuedItem(queued.id, normalized);
         }
 
-        const group = `pl_${Date.now()}`;
-
-        for (const it of items) {
-          pushQueueItem({
-            url: it.url,
-            title: it.title || "Titre en attente...",
-            thumb: it.thumb ?? null,
-            durationSec: it.durationSec || 0,
-            addedBy,
-            group,
-          });
-        }
-
-        socket.emit("toast", `${items.length} titres ajoutés !`);
-        broadcast();
         void ensurePlayerLoop(broadcast);
-        return;
+      } catch (e) {
+        console.error("[Play Error]", e);
+        socket.emit("toast", "Erreur d'ajout.");
       }
-
-      const queued = pushQueueItem({
-        url: normalized,
-        title: "Analyse du signal...",
-        thumb: null,
-        addedBy,
-      });
-
-      broadcast();
-
-      if (!isYoutubeSearchUrl(normalized)) {
-        void enrichQueuedItem(queued.id, normalized);
-      }
-
-      void ensurePlayerLoop(broadcast);
-    } catch (e) {
-      console.error("[Play Error]", e);
-      socket.emit("toast", "Erreur d'ajout.");
     }
-  });
+  );
 
   socket.on("command", async (payload: { cmd: string; arg?: any }) => {
     const h = playing?.handle;
@@ -365,6 +393,22 @@ io.on("connection", (socket) => {
         break;
       }
 
+      case "skip_group": {
+        await skipGroup(broadcast);
+        break;
+      }
+
+      case "previous": {
+        await playPrevious(broadcast);
+        break;
+      }
+
+      case "seek": {
+        const delta = Number(payload.arg) || 0;
+        await seekRelative(delta, broadcast);
+        break;
+      }
+
       case "seek_abs": {
         if (h && typeof payload.arg === "number") {
           if (state.now) {
@@ -386,6 +430,19 @@ io.on("connection", (socket) => {
         if (h) {
           await mpvSetLoopFile(h, isRepeat);
         }
+        break;
+      }
+
+      case "random_mode": {
+        state.control.randomMode = Boolean(payload.arg);
+        break;
+      }
+
+      case "shuffle_queue": {
+        const queuedItems = state.queue.filter((q) => q.status === "queued");
+        const shuffled = shuffleArray(queuedItems);
+        const completed = state.queue.filter((q) => q.status !== "queued");
+        state.queue = [...completed, ...shuffled];
         break;
       }
     }
@@ -431,6 +488,40 @@ io.on("connection", (socket) => {
     broadcast();
   });
 
+  socket.on(
+    "requeue_history_item",
+    ({ id, targetIndex }: { id: string; targetIndex?: number }) => {
+      const source = state.history.find((h) => h.id === id);
+      if (!source) return;
+
+      const newItem = pushQueueItem({
+        url: source.url,
+        title: source.title || "Titre en attente...",
+        thumb: source.thumb ?? null,
+        durationSec: source.durationSec || 0,
+        addedBy: source.addedBy,
+        group: source.group,
+      });
+
+      const queuedItems = state.queue.filter((q) => q.status === "queued");
+      const completed = state.queue.filter((q) => q.status !== "queued");
+
+      const queueOnly = queuedItems.filter((q) => q.id !== newItem.id);
+
+      const insertAt =
+        typeof targetIndex === "number"
+          ? Math.max(0, Math.min(targetIndex, queueOnly.length))
+          : queueOnly.length;
+
+      queueOnly.splice(insertAt, 0, newItem);
+
+      state.queue = [...completed, ...queueOnly];
+
+      broadcast();
+      void ensurePlayerLoop(broadcast);
+    }
+  );
+
   socket.on("disconnect", () => {
     activeUsers--;
     console.log(`👤 Client déconnecté. Restants: ${activeUsers}`);
@@ -458,18 +549,23 @@ io.on("connection", (socket) => {
 async function bootstrap() {
   await setupSpotify();
 
-  const ready = await ensureVoicemeeterReady();
+  const audioReady = await ensureAudioRoutingReady();
+  const audioRouting = getRuntimeAudioRouting();
 
-  if (!ready) {
-    isVoicemeeterMissing = true;
-    console.error("❌ [System] VoiceMeeter Banana n'est pas détecté.");
-    return;
+  if (audioRouting.message) {
+    console.log(`[Audio] ${audioRouting.message}`);
+  }
+
+  if (!audioReady) {
+    systemAudioWarning =
+      audioRouting.message ||
+      "Le routage audio virtuel n'a pas pu être préparé. Le bot utilisera la sortie audio système par défaut.";
   }
 
   ensureMpvRunning().catch(console.error);
 
-  server.listen(4000, () => {
-    console.log("🚀 Server Ready on port 4000");
+  server.listen(APP_CONFIG.PORT, () => {
+    console.log(`🚀 Server Ready on port ${APP_CONFIG.PORT}`);
   });
 }
 
